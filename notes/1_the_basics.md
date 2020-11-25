@@ -43,3 +43,8 @@ glam::const_vec3!([0.9, -0.9, 0.0]), // right-most point
 ```
 
 ![wgpu coordinates](assets/wgpu_coordinates.png)
+
+## Rasterizer Data Flow
+
+![data flow to rasterizer](assets/data_flow_rasterizer.png)
+

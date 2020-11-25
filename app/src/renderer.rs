@@ -234,6 +234,9 @@ impl Renderer {
                     });
 
                     render_pass.set_pipeline(&self.render_pipelines.first().unwrap());
+                    // TODO(alex): These are good candidates for refactoring into configurable
+                    // functions (if we use multiple sources for vertices, we can't have only one
+                    // vertex_buffer being the solely source of everything can we?).
                     render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                     render_pass.draw(0..3, 0..1);
                 }
