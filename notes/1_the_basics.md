@@ -1,0 +1,45 @@
+# Part I. The Basics
+
+## Rasterization Overview
+
+### Clip Space Transformation
+
+Transforms the vertices into **clip space**, imagine holding up a camera and looking at the
+display, some of the things will be _clipped_ out of the scene, even though they are physically
+there, because the camera will only capture a certain size of things (it has a view volume). The
+vertices now are said to have **clip coordinates** (`(x, y, z, w)`). `w` defines the extents
+of the clip space for each _vertex_, so vertices with a different `w` are in different clip spaces
+(different clip volumes, or cubes).
+
+### Normalized Coordinates
+
+Clip space has a different extent for each vertex, so to make things easier, `(x, y, z)` of each
+vertex is divided by `w` to get normalized device coordinates. This is similar to clip space,
+but with the limited extent of `[-1, 1]` for `(x, y, z)`, instead of `[-w, w]`.
+
+### Window Transformation
+
+This is the step that transforms into whatever your window (API) context is.
+
+### Scan Conversion
+
+Samples the pixels to check if it's inside the triangle (or object) and produces **fragments** for
+every sample that is inside.
+
+![triangle scan convert](assets/TriangleScanConvert.svg)
+
+![shared edge scan conversion](assets/SharedEdgeScanConvert.svg)
+
+## OpenGL vs WGPU
+
+**WGPU** uses _DirectX_ coordinate space, which is different from _OpenGL_.
+Bottom left is `(-1, -1)`, top right `(1, 1)` and wgpu renders in **counter-clockwise** fashion (
+my triangle rendering test showed that it did middle -> left -> right).
+
+```rust
+glam::const_vec3!([0.0, 0.9, 0.0]), // middle point
+glam::const_vec3!([-0.9, -0.9, 0.0]), // left-most point
+glam::const_vec3!([0.9, -0.9, 0.0]), // right-most point
+```
+
+![wgpu coordinates](assets/wgpu_coordinates.png)
