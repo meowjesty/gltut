@@ -11,17 +11,17 @@ const VERTICES: &[Vertex] = &[
     // in this case.
     Vertex {
         position: glam::const_vec3!([0.0, 0.9, 0.0]), // middle point
-        color: glam::const_vec3!([0.0, 0.0, 0.0]),
+        color: glam::const_vec3!([1.0, 0.0, 0.0]),
         texture_coordinates: glam::const_vec2!([0.0, 0.0]),
     },
     Vertex {
         position: glam::const_vec3!([-0.9, -0.9, 0.0]), // left-most point
-        color: glam::const_vec3!([0.0, 0.0, 0.0]),
+        color: glam::const_vec3!([0.0, 1.0, 0.0]),
         texture_coordinates: glam::const_vec2!([0.0, 0.0]),
     },
     Vertex {
         position: glam::const_vec3!([0.9, -0.9, 0.0]), // right-most point
-        color: glam::const_vec3!([0.0, 0.0, 0.0]),
+        color: glam::const_vec3!([0.0, 0.0, 1.0]),
         texture_coordinates: glam::const_vec2!([0.0, 0.0]),
     },
 ];
@@ -163,6 +163,12 @@ impl Renderer {
 
         let hello_vs = wgpu::include_spirv!("./shaders/hello.vert.spv");
         let hello_fs = wgpu::include_spirv!("./shaders/hello.frag.spv");
+        let vertex_attributes = wgpu::vertex_attr_array![0 => Float3, 1 => Float3];
+        let vertex_buffer_descriptor = wgpu::VertexBufferDescriptor {
+            stride: core::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &vertex_attributes,
+        };
         let hello_render_pipeline = Renderer::create_render_pipeline(
             Some("Pipeline: Hello"),
             &device,
@@ -170,7 +176,7 @@ impl Renderer {
             hello_vs,
             hello_fs,
             Vec::new(),
-            &[Vertex::descriptor_3d()],
+            &[vertex_buffer_descriptor],
         );
 
         let render_pipelines = vec![hello_render_pipeline];
@@ -222,9 +228,9 @@ impl Renderer {
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.8,
+                                    r: 0.1,
                                     g: 0.1,
-                                    b: 0.4,
+                                    b: 0.1,
                                     a: 1.0,
                                 }),
                                 store: true,
@@ -238,7 +244,7 @@ impl Renderer {
                     // functions (if we use multiple sources for vertices, we can't have only one
                     // vertex_buffer being the solely source of everything can we?).
                     render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                    render_pass.draw(0..3, 0..1);
+                    render_pass.draw(0..VERTICES.len() as u32, 0..1);
                 }
 
                 self.glyph_brush

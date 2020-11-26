@@ -48,3 +48,20 @@ glam::const_vec3!([0.9, -0.9, 0.0]), // right-most point
 
 ![data flow to rasterizer](assets/data_flow_rasterizer.png)
 
+## Vertex Attributes
+
+### Fragment Interpolation
+
+A basic **vertex** shader for a **triangle** will run 3 times, producing 3 _color_ values to
+feed the **fragment** shader. But the fragment shader runs for each produced fragment,
+so for a `500x500` screen, with `250,000` pixels, if the triangle covers `1/10` of the screen,
+then the fragment shader will run `25,000` times. This would makes no sense as there were only
+3 output color values being produced by the vertex shader, but what actually happens is that
+the implicit `smooth out vec4 out_color` does **fragment interpolation**, generating values
+(blends) for each of `n` fragment shader runs. The `smooth` qualifier is the default, so no need
+to explicitly use it
+[glsl qualifiers](https://www.khronos.org/opengl/wiki/Type_Qualifier_(GLSL)#Interpolation_qualifiers).
+
+- > Data passed from the vertex shader to the fragment shader is interpolated across the surface of
+  > the triangle, based on the interpolation qualifier used for the output and input variables in
+  > the vertex and fragment shaders respectively.
