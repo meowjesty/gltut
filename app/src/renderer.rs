@@ -6,6 +6,11 @@ use winit::{dpi, window};
 
 use crate::vertex::Vertex;
 
+#[derive(Debug, Default)]
+pub struct World {
+    pub vertices: Vec<Vertex>,
+}
+
 const VERTICES: &[Vertex] = &[
     // NOTE(alex): Position is done in counter-clockwise fashion, starting from the middle point
     // in this case.
@@ -26,6 +31,18 @@ const VERTICES: &[Vertex] = &[
     },
 ];
 
+/// TODO(alex): There needs to be a separation between things here and an actual `Pipeline`.
+/// As it stands, `Renderer::new()` will create a pipeline with very specific details, that
+/// can't be easily changed (I could set them in the `renderer` instance, but not a good solution),
+/// so I think it's time to refactor this massive struct into smaller, configurable pieces that
+/// belong together (be careful not to end up wrapping each thing individually).
+/// This neccessity is being triggered by the `bind_group_layouts` requiring a uniform buffer
+/// to be present during `Renderer` creation, but we don't actually have only a single uniform
+/// buffer (we do now, but will need more later).
+///
+/// This same issue arises with the vertex buffer, it kinda looks like these buffers are tightly
+/// coupled to their pipelines (1 vertex shader to 1 vertex buffer), and the renderer here has
+/// the multiple pipelines.
 pub struct Renderer {
     surface: wgpu::Surface,
     device: wgpu::Device,
@@ -37,7 +54,9 @@ pub struct Renderer {
     // I've seen the notion of having a single _uber shader_, but it doesn't seem like the best
     // strategy. Each shader is an optmized program, and you need a pipeline for each.
     render_pipelines: Vec<wgpu::RenderPipeline>,
-    vertex_buffer: wgpu::Buffer,
+    /// TODO(alex): Think about double buffering this.
+    vertex_buffers: Vec<wgpu::Buffer>,
+    uniform_buffers: Vec<wgpu::Buffer>,
     glyph_brush: wgpu_glyph::GlyphBrush<()>,
     staging_belt: wgpu::util::StagingBelt,
     size: dpi::PhysicalSize<u32>,
@@ -129,12 +148,6 @@ impl Renderer {
             .await
             .unwrap();
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&VERTICES),
-            usage: wgpu::BufferUsage::VERTEX,
-        });
-
         let render_format = wgpu::TextureFormat::Bgra8UnormSrgb;
         let swap_chain_descriptor = wgpu::SwapChainDescriptor {
             usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
@@ -194,11 +207,34 @@ impl Renderer {
             swap_chain_descriptor,
             swap_chain,
             render_pipelines,
-            vertex_buffer,
+            vertex_buffers: Vec::with_capacity(32),
+            uniform_buffers: Vec::with_capacity(32),
             glyph_brush,
             staging_belt,
             size: window_size,
         }
+    }
+
+    pub fn push_vertex_buffer(&mut self, contents: &[u8]) {
+        let vertex_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Vertex Buffer"),
+                contents,
+                usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+            });
+        self.vertex_buffers.push(vertex_buffer);
+    }
+
+    pub fn push_uniform_buffer(&mut self, contents: &[u8]) {
+        let uniform_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Uniform Buffer"),
+                contents,
+                usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            });
+        self.uniform_buffers.push(uniform_buffer);
     }
 
     pub fn resize(&mut self, new_size: dpi::PhysicalSize<u32>) {
@@ -210,7 +246,12 @@ impl Renderer {
             .create_swap_chain(&self.surface, &self.swap_chain_descriptor);
     }
 
-    pub fn present(&mut self) {
+    pub fn present(&mut self, world: &World) {
+        for vertex_buffer in self.vertex_buffers.as_slice() {
+            self.queue
+                .write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&world.vertices));
+        }
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -222,29 +263,33 @@ impl Renderer {
             .get_current_frame()
             .and_then(|frame| {
                 {
-                    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                            attachment: &frame.output.view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.1,
-                                    g: 0.1,
-                                    b: 0.1,
-                                    a: 1.0,
-                                }),
-                                store: true,
-                            },
-                        }],
-                        depth_stencil_attachment: None,
-                    });
+                    let mut first_render_pass =
+                        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                                attachment: &frame.output.view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                                        r: 0.1,
+                                        g: 0.1,
+                                        b: 0.1,
+                                        a: 1.0,
+                                    }),
+                                    store: true,
+                                },
+                            }],
+                            depth_stencil_attachment: None,
+                        });
 
-                    render_pass.set_pipeline(&self.render_pipelines.first().unwrap());
+                    first_render_pass.set_pipeline(&self.render_pipelines.first().unwrap());
                     // TODO(alex): These are good candidates for refactoring into configurable
                     // functions (if we use multiple sources for vertices, we can't have only one
                     // vertex_buffer being the solely source of everything can we?).
-                    render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                    render_pass.draw(0..VERTICES.len() as u32, 0..1);
+
+                    for vertex_buffer in self.vertex_buffers.as_slice() {
+                        first_render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                        first_render_pass.draw(0..VERTICES.len() as u32, 0..1);
+                    }
                 }
 
                 self.glyph_brush
