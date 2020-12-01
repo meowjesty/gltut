@@ -12,5 +12,6 @@
 
 **.spirv
 **.spv
+**.log
 assets/
 !notes/assets

@@ -11,6 +11,26 @@ use winit::{
 mod renderer;
 mod vertex;
 
+use log::{debug, error, info, trace, warn};
+
+fn setup_logger() -> Result<(), fern::InitError> {
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "{}[{}][{}] {}",
+                chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
+                record.target(),
+                record.level(),
+                message
+            ))
+        })
+        .level(log::LevelFilter::Info)
+        .chain(std::io::stdout())
+        .chain(fern::log_file("output.log")?)
+        .apply()?;
+    Ok(())
+}
+
 fn compute_position_offsets(elapsed: f32) -> (f32, f32) {
     let loop_duration = 5.0;
     let scale = PI * 2.0 / loop_duration;
@@ -21,6 +41,7 @@ fn compute_position_offsets(elapsed: f32) -> (f32, f32) {
 }
 
 fn main() {
+    let _logger = setup_logger().unwrap();
     let timer = Instant::now();
     let event_loop = event_loop::EventLoop::new();
     let window = window::WindowBuilder::new()
@@ -51,8 +72,7 @@ fn main() {
         ],
     };
 
-    let mut renderer = futures::executor::block_on(renderer::Renderer::new(&window));
-    renderer.push_vertex_buffer(bytemuck::cast_slice(&world.vertices));
+    let mut renderer = futures::executor::block_on(renderer::Renderer::new(&window, &world));
     let mut step_timer = fixedstep::FixedStep::start(60.0).limit(5);
     window.request_redraw();
 

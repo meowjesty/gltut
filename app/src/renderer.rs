@@ -1,10 +1,21 @@
 use std::iter;
 
+use bytemuck::{Pod, Zeroable};
+use log::info;
 use wgpu::{util::DeviceExt, Texture};
 use wgpu_glyph::{ab_glyph, GlyphBrushBuilder};
 use winit::{dpi, window};
 
 use crate::vertex::Vertex;
+
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct Uniforms {
+    offset: glam::Vec2,
+}
+
+unsafe impl Zeroable for Uniforms {}
+unsafe impl Pod for Uniforms {}
 
 #[derive(Debug, Default)]
 pub struct World {
@@ -43,9 +54,14 @@ const VERTICES: &[Vertex] = &[
 /// This same issue arises with the vertex buffer, it kinda looks like these buffers are tightly
 /// coupled to their pipelines (1 vertex shader to 1 vertex buffer), and the renderer here has
 /// the multiple pipelines.
+///
+/// I've tried doing it but ended up just in wrap-land, nothing good came out of it...
 pub struct Renderer {
+    /// The _window_ (canvas, surface to draw to, ...).
     surface: wgpu::Surface,
+    /// The logical device (a handle to the GPU).
     device: wgpu::Device,
+    /// How we send the commands due to the asynchronous nature of `wgpu` (vulkan).
     queue: wgpu::Queue,
     swap_chain_descriptor: wgpu::SwapChainDescriptor,
     swap_chain: wgpu::SwapChain,
@@ -56,20 +72,34 @@ pub struct Renderer {
     render_pipelines: Vec<wgpu::RenderPipeline>,
     /// TODO(alex): Think about double buffering this.
     vertex_buffers: Vec<wgpu::Buffer>,
+    /// NOTE(alex): Uniforms in wgpu (and vulkan) are different from uniforms in OpenGL.
+    /// Here we can't dynamically set uniforms with a call like `glUniform2f(id, x, y);`, as
+    /// it is set in stone at pipeline creation (`bind_group`).
     uniform_buffers: Vec<wgpu::Buffer>,
+    bind_groups: Vec<wgpu::BindGroup>,
     glyph_brush: wgpu_glyph::GlyphBrush<()>,
     staging_belt: wgpu::util::StagingBelt,
     size: dpi::PhysicalSize<u32>,
 }
 
 impl Renderer {
+    /// The pipeline describes the configurable state of the GPU.
+    ///
+    /// Modern pipeline APIs (wgpu, vulkan) will require that most of the state description be
+    /// configured in advance (at initialization), this means that if you need a slightly
+    /// different vertex shader (or just different vertex layout), you'll need another pipeline.
+    ///
+    /// All of this means to me that my initial idea of abstracted and highly configurable
+    /// everything is kinda bust, we need an understanding of every layout before the app even
+    /// starts, so dynamic configuration is more like dynamically selecting the correct pipeline,
+    /// instead of changing some values in some struct.
     pub fn create_render_pipeline(
         label: Option<&str>,
         device: &wgpu::Device,
         swap_chain_descriptor: &wgpu::SwapChainDescriptor,
         vertex_shader: wgpu::ShaderModuleSource,
         fragment_shader: wgpu::ShaderModuleSource,
-        bind_group_layouts: Vec<&wgpu::BindGroupLayout>,
+        bind_group_layouts: &[&wgpu::BindGroupLayout],
         vertex_buffer_descriptors: &[wgpu::VertexBufferDescriptor],
     ) -> wgpu::RenderPipeline {
         let vs_module = device.create_shader_module(vertex_shader);
@@ -78,7 +108,7 @@ impl Renderer {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &bind_group_layouts,
+                bind_group_layouts,
                 push_constant_ranges: &[],
             });
 
@@ -121,10 +151,12 @@ impl Renderer {
         render_pipeline
     }
 
-    pub async fn new(window: &window::Window) -> Self {
+    pub async fn new(window: &window::Window, world: &World) -> Self {
         let window_size = window.inner_size();
 
-        // Handle to the GPU
+        // NOTE(alex): Handle to wgpu.
+        // This is very similar to how vulkan is initialized, you first get a connection between
+        // the application and wgpu.
         let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
         let surface = unsafe { instance.create_surface(window) };
         let adapter = instance
@@ -134,8 +166,10 @@ impl Renderer {
             })
             .await
             .unwrap();
+        info!("{:?} supported features {:?}.", adapter, adapter.features());
 
-        // device = logical device
+        // NOTE(alex): `device` is the logical device (a handle to the GPU).
+        // `queue` is how we send the commands due to the asynchronous nature of `wgpu` (vulkan).
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
@@ -158,6 +192,10 @@ impl Renderer {
         };
         let swap_chain = device.create_swap_chain(&surface, &swap_chain_descriptor);
 
+        let sample_uniform = Uniforms {
+            offset: glam::const_vec2!([0.01, 0.01]),
+        };
+
         let uniform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Bind group for uniforms (shader globals)"),
@@ -171,9 +209,26 @@ impl Renderer {
                     count: None,
                 }],
             });
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Uniform buffer"),
+            contents: bytemuck::cast_slice(&[sample_uniform]),
+            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+        });
+        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Uniform bind group"),
+            layout: &uniform_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(uniform_buffer.slice(..)),
+            }],
+        });
 
         let staging_belt = wgpu::util::StagingBelt::new(1024);
 
+        // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
+        // so it makes sense to handle every kind of possible `VertexBufferDescriptor` during
+        // initialization (it doesn't seems to be a configurable feature). It might be refactored
+        // out of here into a more clean `Pipeline` struct, but I guess that's about it.
         let hello_vs = wgpu::include_spirv!("./shaders/hello.vert.spv");
         let hello_fs = wgpu::include_spirv!("./shaders/hello.frag.spv");
         let vertex_attributes = wgpu::vertex_attr_array![0 => Float3, 1 => Float3];
@@ -182,13 +237,23 @@ impl Renderer {
             step_mode: wgpu::InputStepMode::Vertex,
             attributes: &vertex_attributes,
         };
+        // TODO(alex): This is a good candidate to be refactored out, as it doesn't need to be
+        // initialized here. We need it initialized only at `present()`, as the pipeline requires
+        // only the buffer descriptor, not the buffer itself. But where do we move it to?
+        // The above also applies to uniform buffers (any kind of buffer really, only descriptors
+        // are actually important at initialization).
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(&world.vertices),
+            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+        });
         let hello_render_pipeline = Renderer::create_render_pipeline(
             Some("Pipeline: Hello"),
             &device,
             &swap_chain_descriptor,
             hello_vs,
             hello_fs,
-            Vec::new(),
+            &[&uniform_bind_group_layout],
             &[vertex_buffer_descriptor],
         );
 
@@ -207,34 +272,13 @@ impl Renderer {
             swap_chain_descriptor,
             swap_chain,
             render_pipelines,
-            vertex_buffers: Vec::with_capacity(32),
-            uniform_buffers: Vec::with_capacity(32),
+            vertex_buffers: vec![vertex_buffer],
+            uniform_buffers: vec![uniform_buffer],
+            bind_groups: vec![uniform_bind_group],
             glyph_brush,
             staging_belt,
             size: window_size,
         }
-    }
-
-    pub fn push_vertex_buffer(&mut self, contents: &[u8]) {
-        let vertex_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Vertex Buffer"),
-                contents,
-                usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
-            });
-        self.vertex_buffers.push(vertex_buffer);
-    }
-
-    pub fn push_uniform_buffer(&mut self, contents: &[u8]) {
-        let uniform_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Uniform Buffer"),
-                contents,
-                usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-            });
-        self.uniform_buffers.push(uniform_buffer);
     }
 
     pub fn resize(&mut self, new_size: dpi::PhysicalSize<u32>) {
@@ -252,6 +296,20 @@ impl Renderer {
                 .write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&world.vertices));
         }
 
+        // NOTE(alex): To draw a triangle, the encoder sequence of commands is:
+        // 1 - Begin the render pass;
+        // 2 - Bind the pipeline;
+        // 3 - Draw 3 vertices;
+        // 4 - End the render pass.
+
+        // NOTE(alex): The command encoder is equivalent to the vulkan `CommandBuffer`, where
+        // you record the operations that are submitted to the queue.
+        // We can have multiple encoders, each in a separate thread, so we set all the state
+        // needed, and at the end just submit (`finish()`) it to the queue. Thanks to this
+        // approach I don't think memory barriers are needed in the GPU side of things, unlike
+        // in vulkan which would require this setup to be done in a thread-safe way, we get
+        // thread safety for "free". Everything is ordered by the calling order of `finish`
+        // to the queue.
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -263,6 +321,11 @@ impl Renderer {
             .get_current_frame()
             .and_then(|frame| {
                 {
+                    // NOTE(alex): We may have multiple render passes, each using a different
+                    // pipeline (or the same), to handle different contents (shaders, vertices).
+                    // An example would be having a first render pass that draws diffuse geometry,
+                    // by using a `diffuse_shader` and a second pass that does metal with
+                    // `metal_shader`.
                     let mut first_render_pass =
                         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
@@ -286,6 +349,15 @@ impl Renderer {
                     // functions (if we use multiple sources for vertices, we can't have only one
                     // vertex_buffer being the solely source of everything can we?).
 
+                    for (index, bind_group) in self.bind_groups.iter().enumerate() {
+                        // NOTE(alex): The bind group index must match the `set` value in the
+                        // shader, so:
+                        // `layout(set = 0, ...)`
+                        // Requires:
+                        // `set_bind_group(0, ...)`.
+                        first_render_pass.set_bind_group(index as u32, bind_group, &[]);
+                    }
+
                     for vertex_buffer in self.vertex_buffers.as_slice() {
                         first_render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                         first_render_pass.draw(0..VERTICES.len() as u32, 0..1);
@@ -304,6 +376,8 @@ impl Renderer {
                     .unwrap();
 
                 self.staging_belt.finish();
+                // NOTE(alex): `encoder.finish` is called after all our operations are configured,
+                // and the this sequence of commands is ready to be sent to the queue.
                 self.queue.submit(iter::once(encoder.finish()));
 
                 Ok(())

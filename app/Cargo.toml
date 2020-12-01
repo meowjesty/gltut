@@ -15,6 +15,9 @@ futures = { version = "*" }
 glam = { version = "*", features = ["bytemuck", "serde"] }
 bytemuck = { version = "*", features = ["derive"] }
 image = "*"
+log = "*"
+fern = "*"
+chrono = "*"
 
 [build-dependencies]
 anyhow = "*"
