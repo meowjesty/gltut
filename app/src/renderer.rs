@@ -1,8 +1,9 @@
 use std::iter;
 
 use bytemuck::{Pod, Zeroable};
+use futures::{task, task::LocalSpawnExt};
 use log::info;
-use wgpu::{util::DeviceExt, Texture};
+use wgpu::util::DeviceExt;
 use wgpu_glyph::{ab_glyph, GlyphBrushBuilder};
 use winit::{dpi, window};
 
@@ -64,11 +65,16 @@ pub struct Renderer {
     /// How we send the commands due to the asynchronous nature of `wgpu` (vulkan).
     queue: wgpu::Queue,
     swap_chain_descriptor: wgpu::SwapChainDescriptor,
+    /// NOTE(alex): Infrastructure for the queue of images waiting to be presented to the screen,
+    /// in OpenGL there is a default `FrameBuffer`, but wgpu requires an infrastructure of
+    /// that will own the buffers. That's why to render something, you access the next frame
+    /// to be presented via `swap_chain.get_current_frame()`, fills this frame buffer,
+    /// and then render it.
     swap_chain: wgpu::SwapChain,
-    // NOTE(alex): Different shaders require different pipelines, try to understand each pipeline
-    // as a different set of things. Shaders are programs so pipelines act as proccesses for each.
-    // I've seen the notion of having a single _uber shader_, but it doesn't seem like the best
-    // strategy. Each shader is an optmized program, and you need a pipeline for each.
+    /// NOTE(alex): Different shaders require different pipelines, try to understand each pipeline
+    /// as a different set of things. Shaders are programs so pipelines act as proccesses for each.
+    /// I've seen the notion of having a single _uber shader_, but it doesn't seem like the best
+    /// strategy. Each shader is an optmized program, and you need a pipeline for each.
     render_pipelines: Vec<wgpu::RenderPipeline>,
     /// TODO(alex): Think about double buffering this.
     vertex_buffers: Vec<wgpu::Buffer>,
@@ -77,7 +83,7 @@ pub struct Renderer {
     /// it is set in stone at pipeline creation (`bind_group`).
     uniform_buffers: Vec<wgpu::Buffer>,
     bind_groups: Vec<wgpu::BindGroup>,
-    glyph_brush: wgpu_glyph::GlyphBrush<()>,
+    // glyph_brush: wgpu_glyph::GlyphBrush<()>,
     staging_belt: wgpu::util::StagingBelt,
     size: dpi::PhysicalSize<u32>,
 }
@@ -130,6 +136,7 @@ impl Renderer {
                 depth_bias_slope_scale: 0.0,
                 depth_bias_clamp: 0.0,
                 clamp_depth: false,
+                // polygon_mode: wgpu::PolygonMode::Fill,
             }),
             color_states: &[wgpu::ColorStateDescriptor {
                 format: swap_chain_descriptor.format,
@@ -137,6 +144,7 @@ impl Renderer {
                 alpha_blend: wgpu::BlendDescriptor::REPLACE,
                 write_mask: wgpu::ColorWrite::ALL,
             }],
+            // NOTE(alex): Part of the `Input Assembly`, what kind of geometry will be drawn.
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
@@ -173,6 +181,7 @@ impl Renderer {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
+                    // label: Some("Main device descriptor"),
                     features: wgpu::Features::empty(),
                     limits: wgpu::Limits::default(),
                     shader_validation: true,
@@ -184,6 +193,7 @@ impl Renderer {
 
         let render_format = wgpu::TextureFormat::Bgra8UnormSrgb;
         let swap_chain_descriptor = wgpu::SwapChainDescriptor {
+            // usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
             usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
             format: render_format,
             width: window_size.width,
@@ -202,10 +212,16 @@ impl Renderer {
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStage::VERTEX,
+                    // ty: wgpu::BindingType::Buffer {
+                    //     min_binding_size: None,
+                    //     ty: wgpu::BufferBindingType::Uniform,
+                    //     has_dynamic_offset: false,
+                    // },
                     ty: wgpu::BindingType::UniformBuffer {
                         dynamic: false,
                         min_binding_size: None,
                     },
+
                     count: None,
                 }],
             });
@@ -220,6 +236,11 @@ impl Renderer {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(uniform_buffer.slice(..)),
+                // resource: wgpu::BindingResource::Buffer {
+                //     buffer: &uniform_buffer,
+                //     offset: 0,
+                //     size: None,
+                // },
             }],
         });
 
@@ -231,17 +252,18 @@ impl Renderer {
         // out of here into a more clean `Pipeline` struct, but I guess that's about it.
         let hello_vs = wgpu::include_spirv!("./shaders/hello.vert.spv");
         let hello_fs = wgpu::include_spirv!("./shaders/hello.frag.spv");
-        let vertex_attributes = wgpu::vertex_attr_array![0 => Float3, 1 => Float3];
-        let vertex_buffer_descriptor = wgpu::VertexBufferDescriptor {
-            stride: core::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &vertex_attributes,
-        };
+        // NOTE(alex): The pipeline holds the buffer descriptors, it has to understand what kind of
+        // data will be passed to the shaders, so the descriptors must be created before the
+        // pipeline.
         // TODO(alex): This is a good candidate to be refactored out, as it doesn't need to be
         // initialized here. We need it initialized only at `present()`, as the pipeline requires
         // only the buffer descriptor, not the buffer itself. But where do we move it to?
         // The above also applies to uniform buffers (any kind of buffer really, only descriptors
         // are actually important at initialization).
+        // NOTE(alex): The buffer is our way of passing data (vertex in this case) to the GPU,
+        // the pipeline requires buffer descriptors (for each kind of buffer), but it doesn't hold
+        // the buffers themselves, that's why you can create and fill these buffers anywhere
+        // (before they're used, of course).
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(&world.vertices),
@@ -254,7 +276,7 @@ impl Renderer {
             hello_vs,
             hello_fs,
             &[&uniform_bind_group_layout],
-            &[vertex_buffer_descriptor],
+            &[Vertex::DESCRIPTOR],
         );
 
         let render_pipelines = vec![hello_render_pipeline];
@@ -263,7 +285,7 @@ impl Renderer {
             "../../assets/Kosugi_maru/KosugiMaru-Regular.ttf"
         ))
         .unwrap();
-        let glyph_brush = GlyphBrushBuilder::using_font(font).build(&device, render_format);
+        // let glyph_brush = GlyphBrushBuilder::using_font(font).build(&device, render_format);
 
         Self {
             surface,
@@ -275,12 +297,13 @@ impl Renderer {
             vertex_buffers: vec![vertex_buffer],
             uniform_buffers: vec![uniform_buffer],
             bind_groups: vec![uniform_bind_group],
-            glyph_brush,
+            // glyph_brush,
             staging_belt,
             size: window_size,
         }
     }
 
+    /// WARNING(alex): This breaks if `new_size.width == 0 || new_size.height == 0` (minimized).
     pub fn resize(&mut self, new_size: dpi::PhysicalSize<u32>) {
         self.size = new_size;
         self.swap_chain_descriptor.width = new_size.width;
@@ -290,11 +313,19 @@ impl Renderer {
             .create_swap_chain(&self.surface, &self.swap_chain_descriptor);
     }
 
-    pub fn present(&mut self, world: &World) {
-        for vertex_buffer in self.vertex_buffers.as_slice() {
-            self.queue
-                .write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&world.vertices));
-        }
+    // TODO(alex): Staging buffer!
+    // Figure out how to use the `StagingBelt` to copy data from CPU memory to GPU memory, the
+    // way we're doing right now (`queue.write_buffer`) is inneficient, as the CPU has access to
+    // this memory, and we want to have 2 distinct buffers (memory regions), one that's used by
+    // the CPU (where we change things, `World`), and one where we just copy the changes into
+    // (a GPU buffer).
+    // This is done in vulkan via staging buffers, wgpu also supports this way, but it has this
+    // staging belt concept that seems more high level (try it first).
+    pub fn present(&mut self, world: &World, spawner: &impl task::LocalSpawn) {
+        // for vertex_buffer in self.vertex_buffers.as_slice() {
+        //     self.queue
+        //         .write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&world.vertices));
+        // }
 
         // NOTE(alex): To draw a triangle, the encoder sequence of commands is:
         // 1 - Begin the render pass;
@@ -315,6 +346,38 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
+
+        for (index, vertices) in world.vertices.as_slice().iter().enumerate() {
+            // NOTE(alex): My understanding of the `StagingBelt` so far is that, it's an easier
+            // API to use than having staging buffers.
+            // The staging buffers usage (for a vertex buffer) would be:
+            // 1. Have 2 buffers, 1-CPU and 1-GPU bound;
+            // 2. The GPU buffer has the copy attribute;
+            // 3. We write the data into the CPU buffer whenever we want;
+            // 4. Copy the CPU buffer to the GPU buffer when it's time to render the results;
+            // 5. This is achieved with the `queue`;
+            // Meanwhile the staging belt will handle this double buffering for us (including
+            // the synchronization neccessary), and we just call `copy_from_slice(vertices)`.
+            // The only handling we have to do, is to `recall` the buffers after we submitted
+            // every change (including render pass) to the queue. This is needed to "unblock" the
+            // buffers.
+            // It's okay to create only 1 big vertex buffer (any kind of buffer), and we keep
+            // writing and recalling from it (this buffer is a GPU buffer of the staging buffer
+            // way), and any other vertex buffer we have, may be used for the different layouts
+            // required by other vertex shaders. In this example, so far, we only need 1 vertex
+            // buffer, and 1 uniform buffer (there's only 1 buffer layout for each).
+            self.staging_belt
+                .write_buffer(
+                    &mut encoder,
+                    self.vertex_buffers.first().unwrap(),
+                    index as u64 * Vertex::SIZE,
+                    wgpu::BufferSize::new(Vertex::SIZE).unwrap(),
+                    &self.device,
+                )
+                .copy_from_slice(bytemuck::bytes_of(vertices));
+        }
+
+        self.staging_belt.finish();
 
         let _render_result = self
             .swap_chain
@@ -345,9 +408,6 @@ impl Renderer {
                         });
 
                     first_render_pass.set_pipeline(&self.render_pipelines.first().unwrap());
-                    // TODO(alex): These are good candidates for refactoring into configurable
-                    // functions (if we use multiple sources for vertices, we can't have only one
-                    // vertex_buffer being the solely source of everything can we?).
 
                     for (index, bind_group) in self.bind_groups.iter().enumerate() {
                         // NOTE(alex): The bind group index must match the `set` value in the
@@ -358,27 +418,38 @@ impl Renderer {
                         first_render_pass.set_bind_group(index as u32, bind_group, &[]);
                     }
 
-                    for vertex_buffer in self.vertex_buffers.as_slice() {
-                        first_render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    for (index, vertex_buffer) in self.vertex_buffers.iter().enumerate() {
+                        first_render_pass.set_vertex_buffer(index as u32, vertex_buffer.slice(..));
+                        // NOTE(alex): wgpu API takes advantage of ranges to specify the offset
+                        // into the vertex buffer. `0..len()` means that the `gl_VertexIndex`
+                        // starts at `0`.
+                        // `instances` range is the same, but for the `gl_InstanceIndex` used in
+                        // instanced rendering.
+                        // In vulkan, this function call would look like `(0, 0)`.
                         first_render_pass.draw(0..VERTICES.len() as u32, 0..1);
                     }
                 }
 
-                self.glyph_brush
-                    .draw_queued(
-                        &self.device,
-                        &mut self.staging_belt,
-                        &mut encoder,
-                        &frame.output.view,
-                        self.swap_chain_descriptor.width,
-                        self.swap_chain_descriptor.height,
-                    )
-                    .unwrap();
+                // self.glyph_brush
+                //     .draw_queued(
+                //         &self.device,
+                //         &mut self.staging_belt,
+                //         &mut encoder,
+                //         &frame.output.view,
+                //         self.swap_chain_descriptor.width,
+                //         self.swap_chain_descriptor.height,
+                //     )
+                //     .unwrap();
 
-                self.staging_belt.finish();
                 // NOTE(alex): `encoder.finish` is called after all our operations are configured,
                 // and the this sequence of commands is ready to be sent to the queue.
+                // NOTE(alex): We could have multiple commands being submitted to the `queue`,
+                // that's why `encoder.finish()` is put into an iterator (`Once<T>` is a single
+                // element iterator).
                 self.queue.submit(iter::once(encoder.finish()));
+
+                let belt_future = self.staging_belt.recall();
+                spawner.spawn_local(belt_future).unwrap();
 
                 Ok(())
             })

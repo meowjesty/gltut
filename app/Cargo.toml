@@ -10,7 +10,7 @@ edition = "2018"
 fixedstep = "*"
 winit = "*"
 wgpu_glyph = "*"
-wgpu = "*"
+wgpu = { version = "*" }
 futures = { version = "*" }
 glam = { version = "*", features = ["bytemuck", "serde"] }
 bytemuck = { version = "*", features = ["derive"] }
