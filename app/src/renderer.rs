@@ -82,8 +82,36 @@ pub struct Renderer {
     /// Here we can't dynamically set uniforms with a call like `glUniform2f(id, x, y);`, as
     /// it is set in stone at pipeline creation (`bind_group`).
     uniform_buffers: Vec<wgpu::Buffer>,
+    /// NOTE(alex): wgpu recommends putting binding groups accordingly to usage, so bindings that
+    // are run per-frame (change the least) be bind group 0, per-pass bind group 1, and
+    /// per-material bind group 2.
+    ///
+    /// These can be thought of as resources in CPU that you want to pass to the GPU.
+    /// They're linked to the shader stages (the `binding` in a vertex shader), so binding an
+    /// uniform would be like `(layout = 0, binding = 1)`, where 1 is the index.
     bind_groups: Vec<wgpu::BindGroup>,
     // glyph_brush: wgpu_glyph::GlyphBrush<()>,
+    /// Higher level API for handling something similar to staging buffers.
+    ///
+    /// It creates a threaded mechanism to handle copying our data (vertices, normals, ...) into
+    /// a GPU buffer by using multiple buffers (chunks) with `Sender, Receiver` thread
+    /// synchronization.
+    ///
+    /// After finding (or creating) a GPU buffer of appropriate size, it handles writing by
+    /// calling `encoder.copy_buffer_to_buffer`. Which we would have to use in the case of
+    /// staging buffers.
+    /// [Encoder details](https://github.com/gfx-rs/wgpu-rs/blob/master/src/util/belt.rs#L96).
+    ///
+    /// `finish` closes the buffers (chunks) to writing until the GPU is done using them.
+    ///
+    /// `recall` does the heavy synchronization work, checking which buffers are done and moving
+    /// those into a _free_ state.
+    ///
+    /// Vulkan requires specifying the memory type to be used in buffers when you create a buffer,
+    /// same as in wgpu, with the big difference being that Vulkan has the flag
+    /// `VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT` which makes the buffer not accessible by the CPU.
+    /// Staging buffers in vulkan will have the GPU buffer with this flag, meanwhile we don't need
+    /// it here in wgpu-land (doesn't exist), we just need to specify `wgpu::BufferUsage::COPY_DST`.
     staging_belt: wgpu::util::StagingBelt,
     size: dpi::PhysicalSize<u32>,
 }
@@ -267,6 +295,9 @@ impl Renderer {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(&world.vertices),
+            // NOTE(alex): `usage: COPY_DST` is related to the staging buffers idea. This means that
+            // this buffer will be used as the destination for some data.
+            // The kind of buffer must also be specified, so you need the `VERTEX` usage here.
             usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
         });
         let hello_render_pipeline = Renderer::create_render_pipeline(
@@ -341,6 +372,9 @@ impl Renderer {
         // in vulkan which would require this setup to be done in a thread-safe way, we get
         // thread safety for "free". Everything is ordered by the calling order of `finish`
         // to the queue.
+        // NOTE(alex): Encoders are also neccessary for memory commands, that's why the
+        // `StagingBelt.write_buffer` function has an `&mut Encoder` argument. These memory mapping
+        // operations count as commands, and we could put them in different Encoders.
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -375,9 +409,10 @@ impl Renderer {
                     &self.device,
                 )
                 .copy_from_slice(bytemuck::bytes_of(vertices));
-        }
 
-        self.staging_belt.finish();
+            // NOTE(alex): This is how you would use a more traditional staging buffer.
+            // encoder.copy_buffer_to_buffer(......)
+        }
 
         let _render_result = self
             .swap_chain
@@ -441,6 +476,8 @@ impl Renderer {
                 //     )
                 //     .unwrap();
 
+                self.staging_belt.finish();
+
                 // NOTE(alex): `encoder.finish` is called after all our operations are configured,
                 // and the this sequence of commands is ready to be sent to the queue.
                 // NOTE(alex): We could have multiple commands being submitted to the `queue`,
@@ -449,6 +486,12 @@ impl Renderer {
                 self.queue.submit(iter::once(encoder.finish()));
 
                 let belt_future = self.staging_belt.recall();
+                // TODO(alex): Why do we need this spawner?
+                // Removing it, the triangle keeps rotating, no valdation errors, everything seems
+                // just fine.
+                // NOTE(alex): Maybe this is similar to the `vkQueueWaitIdle(graphicsQueue)` idea
+                // from vulkan? Vulkan also allows using fences to deal with this same issue, they
+                // allow for scheduling multiple transfers (memory) simultaneously.
                 spawner.spawn_local(belt_future).unwrap();
 
                 Ok(())

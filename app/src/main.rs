@@ -103,7 +103,7 @@ fn main() {
     };
 
     let mut renderer = futures::executor::block_on(renderer::Renderer::new(&window, &world));
-    let mut step_timer = fixedstep::FixedStep::start(60.0).limit(5);
+    let mut step_timer = fixedstep::FixedStep::start(75.0).limit(5);
     window.request_redraw();
 
     event_loop.run(move |event, _target_window, control_flow| {
@@ -129,6 +129,10 @@ fn main() {
                     vertex.position.y += y_offset * delta as f32;
                 }
                 window.request_redraw();
+                // TODO(alex): Why do we need this pool?
+                // Removing it, the triangle keeps rotating, no valdation errors, everything seems
+                // just fine (added this quite late actually).
+                pool.run_until_stalled();
             }
             Event::RedrawRequested { .. } => {
                 renderer.present(&world, &spawner);
