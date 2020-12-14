@@ -21,24 +21,32 @@ unsafe impl Pod for Uniforms {}
 #[derive(Debug, Default)]
 pub struct World {
     pub vertices: Vec<Vertex>,
+    pub(crate) indices: Vec<u32>,
 }
 
 const VERTICES: &[Vertex] = &[
-    // NOTE(alex): Position is done in counter-clockwise fashion, starting from the middle point
-    // in this case.
     Vertex {
+        // A
         position: glam::const_vec3!([0.0, 0.9, 0.0]), // middle point
         color: glam::const_vec3!([1.0, 0.0, 0.0]),
         texture_coordinates: glam::const_vec2!([0.0, 0.0]),
     },
     Vertex {
+        // B
         position: glam::const_vec3!([-0.9, -0.9, 0.0]), // left-most point
         color: glam::const_vec3!([0.0, 1.0, 0.0]),
         texture_coordinates: glam::const_vec2!([0.0, 0.0]),
     },
     Vertex {
+        // C
         position: glam::const_vec3!([0.9, -0.9, 0.0]), // right-most point
         color: glam::const_vec3!([0.0, 0.0, 1.0]),
+        texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+    },
+    Vertex {
+        // D
+        position: glam::const_vec3!([-0.9, 0.0, 0.0]),
+        color: glam::const_vec3!([1.0, 0.0, 0.0]),
         texture_coordinates: glam::const_vec2!([0.0, 0.0]),
     },
 ];
@@ -76,8 +84,11 @@ pub struct Renderer {
     /// I've seen the notion of having a single _uber shader_, but it doesn't seem like the best
     /// strategy. Each shader is an optmized program, and you need a pipeline for each.
     render_pipelines: Vec<wgpu::RenderPipeline>,
-    /// TODO(alex): Think about double buffering this.
     vertex_buffers: Vec<wgpu::Buffer>,
+    /// NOTE(alex): Indices can be thought of as pointers into the vertex buffer, they take care of
+    /// duplicated vertices, by essentially treating each vertex as a "thing", that's why
+    /// the pointer analogy is so fitting here.
+    index_buffers: Vec<wgpu::Buffer>,
     /// NOTE(alex): Uniforms in wgpu (and vulkan) are different from uniforms in OpenGL.
     /// Here we can't dynamically set uniforms with a call like `glUniform2f(id, x, y);`, as
     /// it is set in stone at pipeline creation (`bind_group`).
@@ -176,7 +187,7 @@ impl Renderer {
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint16,
+                index_format: wgpu::IndexFormat::Uint32,
                 vertex_buffers: &vertex_buffer_descriptors,
             },
             sample_count: 1,
@@ -300,6 +311,18 @@ impl Renderer {
             // The kind of buffer must also be specified, so you need the `VERTEX` usage here.
             usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
         });
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer"),
+            contents: bytemuck::cast_slice(&world.indices),
+            // NOTE(alex): We don't need `COPY_DST` here because this buffer won't be changing
+            // value, if we think about these indices as being 1 geometric figure, they'll remain
+            // the same, unless you wanted to quickly change it from a rectangle to some other
+            // polygon.
+            // Right now I don't see why you would need this, as when I think about 3D models,
+            // they're not supposed to be deformed in this way, what we could do is apply
+            // transformations to the vertices themselves, but the indices stay constant.
+            usage: wgpu::BufferUsage::INDEX,
+        });
         let hello_render_pipeline = Renderer::create_render_pipeline(
             Some("Pipeline: Hello"),
             &device,
@@ -326,6 +349,7 @@ impl Renderer {
             swap_chain,
             render_pipelines,
             vertex_buffers: vec![vertex_buffer],
+            index_buffers: vec![index_buffer],
             uniform_buffers: vec![uniform_buffer],
             bind_groups: vec![uniform_bind_group],
             // glyph_brush,
@@ -443,25 +467,28 @@ impl Renderer {
                         });
 
                     first_render_pass.set_pipeline(&self.render_pipelines.first().unwrap());
+                    first_render_pass
+                        .set_index_buffer(self.index_buffers.first().unwrap().slice(..));
 
-                    for (index, bind_group) in self.bind_groups.iter().enumerate() {
+                    for (i, bind_group) in self.bind_groups.iter().enumerate() {
                         // NOTE(alex): The bind group index must match the `set` value in the
                         // shader, so:
                         // `layout(set = 0, ...)`
                         // Requires:
                         // `set_bind_group(0, ...)`.
-                        first_render_pass.set_bind_group(index as u32, bind_group, &[]);
+                        first_render_pass.set_bind_group(i as u32, bind_group, &[]);
                     }
 
-                    for (index, vertex_buffer) in self.vertex_buffers.iter().enumerate() {
-                        first_render_pass.set_vertex_buffer(index as u32, vertex_buffer.slice(..));
+                    for (i, vertex_buffer) in self.vertex_buffers.iter().enumerate() {
+                        first_render_pass.set_vertex_buffer(i as u32, vertex_buffer.slice(..));
                         // NOTE(alex): wgpu API takes advantage of ranges to specify the offset
                         // into the vertex buffer. `0..len()` means that the `gl_VertexIndex`
                         // starts at `0`.
                         // `instances` range is the same, but for the `gl_InstanceIndex` used in
                         // instanced rendering.
                         // In vulkan, this function call would look like `(0, 0)`.
-                        first_render_pass.draw(0..VERTICES.len() as u32, 0..1);
+                        // first_render_pass.draw(0..world.vertices.len() as u32, 0..1);
+                        first_render_pass.draw_indexed(0..world.indices.len() as u32, 0, 0..1);
                     }
                 }
 

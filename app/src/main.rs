@@ -83,23 +83,34 @@ fn main() {
         .unwrap();
 
     let mut world = World {
+        // NOTE(alex): Position is done in counter-clockwise fashion, starting from the middle point
+        // in this case.
         vertices: vec![
             Vertex {
-                position: glam::const_vec3!([0.0, 0.3, 0.0]), // middle point
+                position: glam::const_vec3!([0.4, 0.4, 0.0]), // middle point
                 color: glam::const_vec3!([1.0, 0.0, 0.0]),
                 texture_coordinates: glam::const_vec2!([0.0, 0.0]),
             },
             Vertex {
-                position: glam::const_vec3!([-0.3, -0.3, 0.0]), // left-most point
+                position: glam::const_vec3!([-0.4, 0.4, 0.0]), // left-most point
                 color: glam::const_vec3!([0.0, 1.0, 0.0]),
                 texture_coordinates: glam::const_vec2!([0.0, 0.0]),
             },
             Vertex {
-                position: glam::const_vec3!([0.3, -0.3, 0.0]), // right-most point
+                position: glam::const_vec3!([0.4, -0.4, 0.0]), // right-most point
                 color: glam::const_vec3!([0.0, 0.0, 1.0]),
                 texture_coordinates: glam::const_vec2!([0.0, 0.0]),
             },
+            Vertex {
+                position: glam::const_vec3!([-0.4, -0.4, 0.0]),
+                color: glam::const_vec3!([1.0, 0.0, 0.0]),
+                texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            },
         ],
+        // NOTE(alex): These indices will work from:
+        // middle->left->right (implicit back to middle);
+        // middle->right->up left (implicit back to middle);
+        indices: vec![0, 1, 2, 3, 2, 1],
     };
 
     let mut renderer = futures::executor::block_on(renderer::Renderer::new(&window, &world));
