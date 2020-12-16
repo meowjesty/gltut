@@ -3,7 +3,7 @@ use std::iter;
 use bytemuck::{Pod, Zeroable};
 use futures::{task, task::LocalSpawnExt};
 use log::info;
-use wgpu::util::DeviceExt;
+use wgpu::{util::DeviceExt, SwapChainDescriptor};
 use wgpu_glyph::{ab_glyph, GlyphBrushBuilder};
 use winit::{dpi, window};
 
@@ -12,44 +12,85 @@ use crate::vertex::Vertex;
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct Uniforms {
-    offset: glam::Vec2,
+    pub view_position: glam::Vec4,
+    pub view_projection: glam::Mat4,
 }
 
 unsafe impl Zeroable for Uniforms {}
 unsafe impl Pod for Uniforms {}
 
+impl Uniforms {
+    pub fn update_view_projection(&mut self, camera: &Camera, projection: &Projection) {
+        self.view_position =
+            glam::Vec4::new(camera.position.x, camera.position.y, camera.position.z, 1.0);
+        self.view_projection = projection.perspective() * camera.view_matrix();
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Camera {
+    // pub eye: glam::Vec3,
+    // target: glam::Vec3,
+    // up: glam::Vec3,
+    // aspect_ratio: f32,
+    // fov_y: f32,
+    // z_near: f32,
+    // z_far: f32,
+    /// X-axis moves the thumb towards the scren +;
+    /// Y-axis moves the index towards the screen +;
+    /// Z-axis moves the hand towards your nose +;
+    pub position: glam::Vec3,
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+impl Camera {
+    pub fn view_matrix(&self) -> glam::Mat4 {
+        glam::Mat4::look_at_rh(
+            self.position,
+            glam::Vec3::new(self.yaw.cos(), self.pitch.sin(), self.yaw.sin()).normalize(),
+            glam::Vec3::unit_y(),
+        )
+    }
+
+    // pub fn view_projection_matrix(&self) -> glam::Mat4 {
+    //     let view = glam::Mat4::look_at_rh(self.eye, self.target, self.up);
+    //     let projection = glam::Mat4::perspective_rh(
+    //         self.fov_y.to_radians(),
+    //         self.aspect_ratio,
+    //         self.z_near,
+    //         self.z_far,
+    //     );
+
+    //     projection * view
+    // }
+}
+
+#[derive(Debug, Default)]
+pub struct Projection {
+    pub aspect_ratio: f32,
+    pub fov_y: f32,
+    pub z_near: f32,
+    pub z_far: f32,
+}
+
+impl Projection {
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.aspect_ratio = width as f32 / height as f32;
+    }
+
+    pub fn perspective(&self) -> glam::Mat4 {
+        glam::Mat4::perspective_rh(self.fov_y, self.aspect_ratio, self.z_near, self.z_far)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct World {
     pub vertices: Vec<Vertex>,
     pub(crate) indices: Vec<u32>,
+    pub(crate) camera: Camera,
+    pub(crate) projection: Projection,
 }
-
-const VERTICES: &[Vertex] = &[
-    Vertex {
-        // A
-        position: glam::const_vec3!([0.0, 0.9, 0.0]), // middle point
-        color: glam::const_vec3!([1.0, 0.0, 0.0]),
-        texture_coordinates: glam::const_vec2!([0.0, 0.0]),
-    },
-    Vertex {
-        // B
-        position: glam::const_vec3!([-0.9, -0.9, 0.0]), // left-most point
-        color: glam::const_vec3!([0.0, 1.0, 0.0]),
-        texture_coordinates: glam::const_vec2!([0.0, 0.0]),
-    },
-    Vertex {
-        // C
-        position: glam::const_vec3!([0.9, -0.9, 0.0]), // right-most point
-        color: glam::const_vec3!([0.0, 0.0, 1.0]),
-        texture_coordinates: glam::const_vec2!([0.0, 0.0]),
-    },
-    Vertex {
-        // D
-        position: glam::const_vec3!([-0.9, 0.0, 0.0]),
-        color: glam::const_vec3!([1.0, 0.0, 0.0]),
-        texture_coordinates: glam::const_vec2!([0.0, 0.0]),
-    },
-];
 
 /// TODO(alex): There needs to be a separation between things here and an actual `Pipeline`.
 /// As it stands, `Renderer::new()` will create a pipeline with very specific details, that
@@ -134,10 +175,22 @@ impl Renderer {
     /// configured in advance (at initialization), this means that if you need a slightly
     /// different vertex shader (or just different vertex layout), you'll need another pipeline.
     ///
-    /// All of this means to me that my initial idea of abstracted and highly configurable
+    /// All of this means to me that my initial idea of an abstracted and highly configurable
     /// everything is kinda bust, we need an understanding of every layout before the app even
     /// starts, so dynamic configuration is more like dynamically selecting the correct pipeline,
     /// instead of changing some values in some struct.
+    ///
+    /// The `BindGroupLayout` and (its companions) is a way to tackle global variables in the GPU.
+    /// This is closely related to uniforms (which are the shader globals), and the alternative to
+    /// not using them, would be to keep updating the vertex buffers for small changes, that
+    /// happen every single frame (or have a happen at a high-frequency).
+    ///
+    /// The `BindGroupLayout` specifies what the types of resources that are going to be accessed
+    /// by the pipeline, it's a handle to the GPU-side of a binding group.
+    ///
+    /// The `BindGroupLayoutDescriptor` specifies the actual buffer or image resources that will
+    /// be bound via each of its `entries`. It's bound to the drawing commands, just like the
+    /// vertex buffers.
     pub fn create_render_pipeline(
         label: Option<&str>,
         device: &wgpu::Device,
@@ -198,7 +251,7 @@ impl Renderer {
         render_pipeline
     }
 
-    pub async fn new(window: &window::Window, world: &World) -> Self {
+    pub async fn new(window: &window::Window, world: &mut World) -> Self {
         let window_size = window.inner_size();
 
         // NOTE(alex): Handle to wgpu.
@@ -241,10 +294,6 @@ impl Renderer {
         };
         let swap_chain = device.create_swap_chain(&surface, &swap_chain_descriptor);
 
-        let sample_uniform = Uniforms {
-            offset: glam::const_vec2!([0.01, 0.01]),
-        };
-
         let uniform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Bind group for uniforms (shader globals)"),
@@ -264,9 +313,15 @@ impl Renderer {
                     count: None,
                 }],
             });
+        // TODO(alex): This initialization is redundant, there has to be a way to create the
+        // uniforms using the camera and projection values correctly.
+        world.projection.aspect_ratio =
+            swap_chain_descriptor.width as f32 / swap_chain_descriptor.height as f32;
+        let mut uniforms = Uniforms::default();
+        uniforms.update_view_projection(&world.camera, &world.projection);
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Uniform buffer"),
-            contents: bytemuck::cast_slice(&[sample_uniform]),
+            contents: bytemuck::cast_slice(&[uniforms]),
             usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
         });
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -359,10 +414,11 @@ impl Renderer {
     }
 
     /// WARNING(alex): This breaks if `new_size.width == 0 || new_size.height == 0` (minimized).
-    pub fn resize(&mut self, new_size: dpi::PhysicalSize<u32>) {
+    pub fn resize(&mut self, new_size: dpi::PhysicalSize<u32>, world: &mut World) {
         self.size = new_size;
         self.swap_chain_descriptor.width = new_size.width;
         self.swap_chain_descriptor.height = new_size.height;
+        world.projection.resize(new_size.width, new_size.height);
         self.swap_chain = self
             .device
             .create_swap_chain(&self.surface, &self.swap_chain_descriptor);
