@@ -7,19 +7,21 @@ use wgpu::{util::DeviceExt, SwapChainDescriptor};
 use wgpu_glyph::{ab_glyph, GlyphBrushBuilder};
 use winit::{dpi, window};
 
-use crate::vertex::Vertex;
+use crate::{vertex::Vertex, CameraController};
 
 #[repr(C)]
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone, Pod, Zeroable)]
 pub struct Uniforms {
     pub view_position: glam::Vec4,
     pub view_projection: glam::Mat4,
 }
 
-unsafe impl Zeroable for Uniforms {}
-unsafe impl Pod for Uniforms {}
+// unsafe impl Zeroable for Uniforms {}
+// unsafe impl Pod for Uniforms {}
 
 impl Uniforms {
+    pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<Self>() as wgpu::BufferAddress;
+
     pub fn update_view_projection(&mut self, camera: &Camera, projection: &Projection) {
         self.view_position =
             glam::Vec4::new(camera.position.x, camera.position.y, camera.position.z, 1.0);
@@ -88,8 +90,10 @@ impl Projection {
 pub struct World {
     pub vertices: Vec<Vertex>,
     pub(crate) indices: Vec<u32>,
+    pub(crate) camera_controller: CameraController,
     pub(crate) camera: Camera,
     pub(crate) projection: Projection,
+    pub(crate) uniforms: Uniforms,
 }
 
 /// TODO(alex): There needs to be a separation between things here and an actual `Pipeline`.
@@ -133,7 +137,7 @@ pub struct Renderer {
     /// NOTE(alex): Uniforms in wgpu (and vulkan) are different from uniforms in OpenGL.
     /// Here we can't dynamically set uniforms with a call like `glUniform2f(id, x, y);`, as
     /// it is set in stone at pipeline creation (`bind_group`).
-    uniform_buffers: Vec<wgpu::Buffer>,
+    uniform_buffer: wgpu::Buffer,
     /// NOTE(alex): wgpu recommends putting binding groups accordingly to usage, so bindings that
     // are run per-frame (change the least) be bind group 0, per-pass bind group 1, and
     /// per-material bind group 2.
@@ -317,11 +321,12 @@ impl Renderer {
         // uniforms using the camera and projection values correctly.
         world.projection.aspect_ratio =
             swap_chain_descriptor.width as f32 / swap_chain_descriptor.height as f32;
-        let mut uniforms = Uniforms::default();
-        uniforms.update_view_projection(&world.camera, &world.projection);
+        world
+            .uniforms
+            .update_view_projection(&world.camera, &world.projection);
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Uniform buffer"),
-            contents: bytemuck::cast_slice(&[uniforms]),
+            contents: bytemuck::cast_slice(&[world.uniforms]),
             usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
         });
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -405,7 +410,7 @@ impl Renderer {
             render_pipelines,
             vertex_buffers: vec![vertex_buffer],
             index_buffers: vec![index_buffer],
-            uniform_buffers: vec![uniform_buffer],
+            uniform_buffer,
             bind_groups: vec![uniform_bind_group],
             // glyph_brush,
             staging_belt,
@@ -493,6 +498,16 @@ impl Renderer {
             // NOTE(alex): This is how you would use a more traditional staging buffer.
             // encoder.copy_buffer_to_buffer(......)
         }
+
+        self.staging_belt
+            .write_buffer(
+                &mut encoder,
+                &self.uniform_buffer,
+                0,
+                wgpu::BufferSize::new(Uniforms::SIZE).unwrap(),
+                &self.device,
+            )
+            .copy_from_slice(bytemuck::bytes_of(&world.uniforms));
 
         let _render_result = self
             .swap_chain

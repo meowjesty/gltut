@@ -1,11 +1,17 @@
-use std::{f32::consts::PI, time::Instant};
+use std::{
+    f32::consts::{FRAC_PI_2, PI},
+    time::Instant,
+};
 
 use renderer::{Camera, Projection, Uniforms, World};
 use vertex::Vertex;
 use wgpu::util::DeviceExt;
 use winit::{
     dpi,
-    event::{Event, WindowEvent},
+    event::{
+        DeviceEvent, ElementState, Event, KeyboardInput, MouseScrollDelta, VirtualKeyCode,
+        WindowEvent,
+    },
     event_loop, window,
 };
 
@@ -61,6 +67,114 @@ fn compute_position_offsets(elapsed: f32) -> (f32, f32) {
     let x_offset = f32::cos(current_time_through * scale) * 0.005;
     let y_offset = f32::sin(current_time_through * scale) * 0.005;
     (x_offset, y_offset)
+}
+
+#[derive(Debug, Default)]
+pub struct CameraController {
+    left: f32,
+    right: f32,
+    forward: f32,
+    backward: f32,
+    up: f32,
+    down: f32,
+    rotate_horizontal: f32,
+    rotate_vertical: f32,
+    scroll: f32,
+    speed: f32,
+    sensitivity: f32,
+}
+
+impl CameraController {
+    pub fn new(speed: f32, sensitivity: f32) -> CameraController {
+        CameraController {
+            speed,
+            sensitivity,
+            ..Default::default()
+        }
+    }
+
+    pub fn process_keyboard(&mut self, key: VirtualKeyCode, state: ElementState) {
+        let amount = if state == ElementState::Pressed {
+            1.0
+        } else {
+            0.0
+        };
+
+        match key {
+            VirtualKeyCode::W | VirtualKeyCode::Up => {
+                self.forward = amount;
+            }
+            VirtualKeyCode::S | VirtualKeyCode::Down => {
+                self.backward = amount;
+            }
+            VirtualKeyCode::A | VirtualKeyCode::Left => {
+                self.left = amount;
+            }
+            VirtualKeyCode::D | VirtualKeyCode::Right => {
+                self.right = amount;
+            }
+            VirtualKeyCode::Space => {
+                self.up = amount;
+            }
+            VirtualKeyCode::LShift => {
+                self.down = amount;
+            }
+            _ => (),
+        }
+    }
+
+    pub fn process_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
+        self.rotate_horizontal = mouse_dx as f32;
+        self.rotate_vertical = mouse_dy as f32;
+    }
+
+    pub fn process_scroll(&mut self, scroll_delta: &MouseScrollDelta) {
+        self.scroll = -match scroll_delta {
+            // I'm assuming a line is about 100 pixels
+            MouseScrollDelta::LineDelta(_, scroll) => scroll * 100.0,
+            MouseScrollDelta::PixelDelta(dpi::PhysicalPosition { y: scroll, .. }) => *scroll as f32,
+        };
+    }
+
+    pub fn update_camera(&mut self, camera: &mut Camera, delta_time: f32) {
+        // forward/backward, left/right
+        let (yaw_sin, yaw_cos) = camera.yaw.sin_cos();
+        let forward = glam::Vec3::new(yaw_cos, 0.0, yaw_sin).normalize();
+        let right = glam::Vec3::new(-yaw_sin, 0.0, yaw_cos).normalize();
+        camera.position += forward * (self.forward - self.backward) * self.speed * delta_time;
+        camera.position += right * (self.right - self.left) * self.speed * delta_time;
+
+        // Move up/down. Since we don't use roll, we can just
+        // modify the y coordinate directly.
+        camera.position.y += (self.up - self.down) * self.speed * delta_time;
+
+        self.rotate_horizontal = 0.0;
+        self.rotate_vertical = 0.0;
+
+        if camera.pitch < -FRAC_PI_2 {
+            camera.pitch = -FRAC_PI_2;
+        } else if camera.pitch > FRAC_PI_2 {
+            camera.pitch = FRAC_PI_2;
+        }
+    }
+}
+
+fn handle_input(event: &DeviceEvent, world: &mut World, delta_time: f32) {
+    match event {
+        DeviceEvent::Key(KeyboardInput {
+            virtual_keycode: Some(key),
+            state,
+            ..
+        }) => {
+            world.camera_controller.process_keyboard(*key, *state);
+        }
+        DeviceEvent::MouseMotion { delta } => {}
+        DeviceEvent::MouseWheel { delta } => {}
+        DeviceEvent::Motion { axis, value } => {}
+        DeviceEvent::Button { button, state } => {}
+        DeviceEvent::Text { codepoint } => {}
+        _ => (),
+    }
 }
 
 fn main() {
@@ -286,6 +400,8 @@ fn main() {
             z_near: 0.1,
             z_far: 100.0,
         },
+        camera_controller: CameraController::new(1.0, 0.4),
+        uniforms: Uniforms::default(),
     };
 
     let mut renderer = futures::executor::block_on(renderer::Renderer::new(&window, &mut world));
@@ -296,6 +412,9 @@ fn main() {
         *control_flow = event_loop::ControlFlow::Poll;
 
         match event {
+            Event::DeviceEvent { ref event, .. } => {
+                handle_input(event, &mut world, step_timer.render_delta() as f32);
+            }
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::Resized(new_size) => {
                     renderer.resize(new_size, &mut world);
@@ -304,10 +423,26 @@ fn main() {
                     renderer.resize(*new_inner_size, &mut world);
                 }
                 WindowEvent::CloseRequested => *control_flow = event_loop::ControlFlow::Exit,
+                WindowEvent::KeyboardInput { input, .. } => match input {
+                    winit::event::KeyboardInput {
+                        state: winit::event::ElementState::Pressed,
+                        virtual_keycode: Some(winit::event::VirtualKeyCode::Escape),
+                        ..
+                    } => {
+                        *control_flow = event_loop::ControlFlow::Exit;
+                    }
+                    _ => (),
+                },
                 _ => (),
             },
             Event::MainEventsCleared => {
                 while step_timer.update() {}
+                world
+                    .camera_controller
+                    .update_camera(&mut world.camera, step_timer.render_delta() as f32);
+                world
+                    .uniforms
+                    .update_view_projection(&world.camera, &world.projection);
                 let delta = step_timer.render_delta();
                 let (x_offset, y_offset) = compute_position_offsets(timer.elapsed().as_secs_f32());
                 for mut vertex in world.vertices.iter_mut() {
