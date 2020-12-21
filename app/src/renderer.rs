@@ -69,7 +69,8 @@ impl Camera {
         // NOTE(alex): glam doesn't have a public version of look at direction
         // (`cgmath::loot_at_dir), that's why it was rotating around the center point, as this
         // `glam::look_at_rh` looks at the center (locks the center, not a direction).
-        // TODO(alex): Is there a way to use `let view_matrix = glam::Mat4::look_at_rh(` correctly?
+        // TODO(alex): Is there a way to use `let view_matrix = glam::Mat4::look_at_rh(` correctly
+        // by using look_at_rh formula with the correct center (check the math)?
         // TODO(alex): We don't need the `OPENGL_TO_WGPU_MATRIX`, things still look okay so far
         // without it.
         let view_matrix = look_at_dir(
@@ -181,6 +182,10 @@ pub struct Renderer {
     /// NOTE(alex): Uniforms in wgpu (and vulkan) are different from uniforms in OpenGL.
     /// Here we can't dynamically set uniforms with a call like `glUniform2f(id, x, y);`, as
     /// it is set in stone at pipeline creation (`bind_group`).
+    ///
+    /// This does not mean that you can't change the values passed though (this restriction is in
+    /// relation to the bind groups), you can still modify uniforms by writing to the buffer like
+    /// we're doing here with the `staging_belt.copy_from_slice`.
     uniform_buffer: wgpu::Buffer,
     /// NOTE(alex): wgpu recommends putting binding groups accordingly to usage, so bindings that
     // are run per-frame (change the least) be bind group 0, per-pass bind group 1, and
@@ -239,6 +244,9 @@ impl Renderer {
     /// The `BindGroupLayoutDescriptor` specifies the actual buffer or image resources that will
     /// be bound via each of its `entries`. It's bound to the drawing commands, just like the
     /// vertex buffers.
+    ///
+    /// The `entries` are similar to how vulkan has a set of descriptors that can be bound, in wgpu
+    /// you don't need a descriptor pool, the `BindGroupLayoutDescriptor` handles this pool for us.
     pub fn create_render_pipeline(
         label: Option<&str>,
         device: &wgpu::Device,
@@ -387,6 +395,49 @@ impl Renderer {
             }],
         });
 
+        let texture_bytes = include_bytes!("../../assets/tree.png");
+        let texture_image = image::load_from_memory(texture_bytes).unwrap();
+        let texture_rgba = texture_image.as_rgba8().unwrap();
+        let texture_dimensions = image::GenericImageView::dimensions(&texture_image);
+        let texture_size = wgpu::Extent3d {
+            width: texture_dimensions.0,
+            height: texture_dimensions.1,
+            depth: 1,
+        };
+        // NOTE(alex): This is somewhat equivalent to the vulkan `VkImage`, the main difference is
+        // that memory handling is easier in wgpu.
+        // NOTE(alex): 1D images can be used to store an array of data or gradient, 2D are mainly
+        // used for textures (here), while 3D images can be used to store voxel volumes.
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Texture"),
+            size: texture_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            // NOTE(alex): `TextureUsage::SAMPLED` means optimal for shader, while
+            // `TextureUsage::COPY_DST` is optimal as the destination in a transfer op (copy to).
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+        });
+        // NOTE(alex): We only have to write this image to a buffer once (if we're not changing the
+        // image), so copying the data during the renderer initialization is fine.
+        // There is a legacy way of doing it, that involves copying it as a buffer, and doing the
+        // `encoder`, `staging_belt` dance (this is how vulkan works with its staging buffers).
+        queue.write_texture(
+            wgpu::TextureCopyView {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            texture_rgba,
+            wgpu::TextureDataLayout {
+                offset: 0,
+                bytes_per_row: 4 * texture_dimensions.0,
+                rows_per_image: texture_dimensions.1,
+            },
+            texture_size,
+        );
+
         let staging_belt = wgpu::util::StagingBelt::new(1024);
 
         // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
@@ -473,14 +524,6 @@ impl Renderer {
             .create_swap_chain(&self.surface, &self.swap_chain_descriptor);
     }
 
-    // TODO(alex): Staging buffer!
-    // Figure out how to use the `StagingBelt` to copy data from CPU memory to GPU memory, the
-    // way we're doing right now (`queue.write_buffer`) is inneficient, as the CPU has access to
-    // this memory, and we want to have 2 distinct buffers (memory regions), one that's used by
-    // the CPU (where we change things, `World`), and one where we just copy the changes into
-    // (a GPU buffer).
-    // This is done in vulkan via staging buffers, wgpu also supports this way, but it has this
-    // staging belt concept that seems more high level (try it first).
     pub fn present(&mut self, world: &World, spawner: &impl task::LocalSpawn) {
         // for vertex_buffer in self.vertex_buffers.as_slice() {
         //     self.queue

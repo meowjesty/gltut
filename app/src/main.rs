@@ -283,15 +283,6 @@ fn main() {
         // middle->left->right (implicit back to middle);
         // middle->right->up left (implicit back to middle);
         indices,
-        // TODO(alex): Get a better understanding of this camera, triangles disappeared because
-        // I don't truly understand the values here.
-        // TODO(alex): Camera is still wrong, mouse rotation is busted, it jiggles like crazy,
-        // without really rotating. The math is still off, that's why WASD are rotating the camera,
-        // instead of moving it sideways.
-        // The camera position itself is working as intended regarding WASD:
-        // - (AD) changes x;
-        // - (Shift/Space) changes y;
-        // - (WS) changes z (the more forward you go, the lower z gets, until it flips negative);
         camera: Camera {
             // eye: (0.0, 1.0, 2.0).into(),
             // target: (0.0, 0.0, 0.0).into(),
