@@ -238,7 +238,7 @@ fn main() {
 
     let (mut zeroed_vertices, mut zeroed_indices) = cube(
         glam::Vec3::new(0.0, 0.0, 0.0),
-        5.0,
+        10.0,
         72,
         glam::Vec3::new(0.0, 1.0, 1.0),
     );
@@ -291,7 +291,7 @@ fn main() {
             // fov_y: 45.0,
             // z_near: 0.1,
             // z_far: 100.0,
-            position: glam::const_vec3!([0.0, 0.0, 10.0]),
+            position: glam::const_vec3!([0.0, 5.0, 10.0]),
             // NOTE(alex): Yaw "rotates" around the Y-axis, positive rotates the right hand to the
             // right (meaning the thumb points away from the nose), negative rotates the thumb
             // towards your nose (-90 degrees makes your thumb point to your nose, the Z-axis
@@ -349,8 +349,8 @@ fn main() {
                     let (x_offset, y_offset) =
                         compute_position_offsets(timer.elapsed().as_secs_f32());
                     for mut vertex in world.vertices.iter_mut() {
-                        vertex.position.x += x_offset;
-                        vertex.position.y += y_offset;
+                        // vertex.position.x += x_offset;
+                        // vertex.position.y += y_offset;
                     }
                 }
                 world
