@@ -72,6 +72,7 @@ fn compute_position_offsets(elapsed: f32) -> (f32, f32) {
 
 #[derive(Debug, Default)]
 pub struct CameraController {
+    mouse_pressed: bool,
     left: f32,
     right: f32,
     forward: f32,
@@ -125,12 +126,14 @@ impl CameraController {
     }
 
     pub fn process_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
-        self.rotate_horizontal = mouse_dx as f32;
-        self.rotate_vertical = mouse_dy as f32;
+        if self.mouse_pressed {
+            self.rotate_horizontal = mouse_dx as f32;
+            self.rotate_vertical = mouse_dy as f32;
+        }
     }
 
     pub fn process_scroll(&mut self, scroll_delta: &MouseScrollDelta) {
-        self.scroll = -match scroll_delta {
+        self.scroll = match scroll_delta {
             // I'm assuming a line is about 100 pixels
             MouseScrollDelta::LineDelta(_, scroll) => scroll * 100.0,
             MouseScrollDelta::PixelDelta(dpi::PhysicalPosition { y: scroll, .. }) => *scroll as f32,
@@ -190,7 +193,13 @@ fn handle_input(event: &DeviceEvent, world: &mut World, delta_time: f32) {
             world.camera_controller.process_scroll(delta);
         }
         DeviceEvent::Motion { axis, value } => {}
-        DeviceEvent::Button { button, state } => {}
+        DeviceEvent::Button { button, state } => {
+            if *button == 1 && *state == ElementState::Pressed {
+                world.camera_controller.mouse_pressed = true;
+            } else {
+                world.camera_controller.mouse_pressed = false;
+            }
+        }
         DeviceEvent::Text { codepoint } => {}
         _ => (),
     }
@@ -308,7 +317,8 @@ fn main() {
             z_near: 0.1,
             z_far: 100.0,
         },
-        camera_controller: CameraController::new(1.0, 0.4),
+        // TODO(alex): Mouse is moving too fast, maybe something wrong with the math?
+        camera_controller: CameraController::new(1.0, 0.2),
         uniforms: Uniforms::default(),
     };
 
@@ -369,7 +379,6 @@ fn main() {
                 pool.run_until_stalled();
             }
             Event::RedrawRequested { .. } => {
-                info!("Camera position {:?}", world.camera);
                 renderer.present(&world, &spawner);
             }
             _ => (),

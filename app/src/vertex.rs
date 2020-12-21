@@ -46,6 +46,12 @@ impl Vertex {
     // }
 }
 
+/// Back -> red
+/// Front -> blue
+/// Left -> green
+/// Right -> green + blue
+/// Top -> black
+/// Bottom -> white
 pub fn cube(
     origin: glam::Vec3,
     size: f32,
@@ -117,22 +123,22 @@ pub fn cube(
     let mut left = vec![
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z),
-            color: glam::Vec3::new(color.x, color.y, color.z + size),
+            color: glam::Vec3::new(0.0, 1.0, 0.0),
             texture_coordinates: glam::const_vec2!([0.0, 0.0]),
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z + size),
-            color: glam::Vec3::new(color.x, color.y, color.z + size),
+            color: glam::Vec3::new(0.0, 1.0, 0.0),
             texture_coordinates: glam::const_vec2!([0.0, 0.0]),
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z),
-            color: glam::Vec3::new(color.x, color.y, color.z + size),
+            color: glam::Vec3::new(0.0, 1.0, 0.0),
             texture_coordinates: glam::const_vec2!([0.0, 0.0]),
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z + size),
-            color: glam::Vec3::new(color.x, color.y, color.z + size),
+            color: glam::Vec3::new(0.0, 1.0, 0.0),
             texture_coordinates: glam::const_vec2!([0.0, 0.0]),
         },
     ];
@@ -148,17 +154,17 @@ pub fn cube(
     let mut right = vec![
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z),
-            color: glam::Vec3::new(1.0, 0.0, 0.0),
+            color: glam::Vec3::new(0.0, 1.0, 1.0),
             texture_coordinates: glam::const_vec2!([0.0, 0.0]),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z + size),
-            color: glam::Vec3::new(0.0, 1.0, 0.0),
+            color: glam::Vec3::new(0.0, 1.0, 1.0),
             texture_coordinates: glam::const_vec2!([0.0, 0.0]),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z),
-            color: glam::Vec3::new(0.0, 0.0, 1.0),
+            color: glam::Vec3::new(0.0, 1.0, 1.0),
             texture_coordinates: glam::const_vec2!([0.0, 0.0]),
         },
         Vertex {
