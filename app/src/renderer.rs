@@ -1,10 +1,10 @@
-use std::iter;
+use std::{iter, num::{NonZeroU32, NonZeroU8}};
 
 use bytemuck::{Pod, Zeroable};
 use futures::{task, task::LocalSpawnExt};
 use glam::swizzles::*;
 use log::info;
-use wgpu::{util::DeviceExt, SwapChainDescriptor};
+use wgpu::{util::DeviceExt, SwapChainDescriptor, TextureAspect};
 use wgpu_glyph::{ab_glyph, GlyphBrushBuilder};
 use winit::{dpi, window};
 
@@ -408,6 +408,8 @@ impl Renderer {
         // that memory handling is easier in wgpu.
         // NOTE(alex): 1D images can be used to store an array of data or gradient, 2D are mainly
         // used for textures (here), while 3D images can be used to store voxel volumes.
+        // NOTE(alex): You could use the shader to access the buffer of pixels directly, but
+        // it isn't optimal.
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Texture"),
             size: texture_size,
@@ -437,6 +439,39 @@ impl Renderer {
             },
             texture_size,
         );
+        // NOTE(alex): Images are accessed by views rather than directly.
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Texture view"),
+            format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            aspect: TextureAspect::All,
+            base_mip_level: 0,
+            level_count: NonZeroU32::new(1),
+            base_array_layer: 0,
+            array_layer_count: NonZeroU32::new(1),
+        });
+        // NOTE(alex): How the texture (the texels) will be mapped into geometry, what kind of
+        // filters should it apply.
+        // The sampler is independent of the image (texture), it's a descriptor that can be used
+        // for any image we want and it will apply these properties (filters) to it. It's an
+        // interface to extract colors from a texture.
+        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Texture sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 0.0,
+            // NOTE(alex): Texels will be compared to a value, and then the result will be used in
+            // filtering operations (useful for shadow maps).
+            compare: Some(wgpu::CompareFunction::Always),
+            // TODO(alex): Is there an equivalent to vulkan's
+            // `VkPhysicalDeviceProperties.limits.maxSamplerAnisotropy`?
+            anisotropy_clamp: NonZeroU8::new(16),
+        });
 
         let staging_belt = wgpu::util::StagingBelt::new(1024);
 
