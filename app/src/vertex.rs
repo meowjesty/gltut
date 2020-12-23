@@ -25,6 +25,11 @@ impl Vertex {
                 shader_location: 1,
                 format: wgpu::VertexFormat::Float3,
             },
+            wgpu::VertexAttributeDescriptor {
+                offset: (core::mem::size_of::<glam::Vec3>() * 2) as wgpu::BufferAddress,
+                shader_location: 2,
+                format: wgpu::VertexFormat::Float2,
+            },
         ],
     };
 
@@ -62,22 +67,22 @@ pub fn cube(
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: glam::const_vec2!([0.4, 0.9]),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: glam::const_vec2!([0.04, 0.5]),
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: glam::const_vec2!([0.2, 0.05]),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: glam::const_vec2!([0.9, 0.7]),
         },
     ];
     let mut back_indices = vec![

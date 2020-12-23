@@ -1,10 +1,13 @@
-use std::{iter, num::{NonZeroU32, NonZeroU8}};
+use std::{
+    iter,
+    num::{NonZeroU32, NonZeroU8},
+};
 
 use bytemuck::{Pod, Zeroable};
 use futures::{task, task::LocalSpawnExt};
 use glam::swizzles::*;
 use log::info;
-use wgpu::{util::DeviceExt, SwapChainDescriptor, TextureAspect};
+use wgpu::{util::DeviceExt, BindGroupLayoutEntry, SwapChainDescriptor, TextureAspect};
 use wgpu_glyph::{ab_glyph, GlyphBrushBuilder};
 use winit::{dpi, window};
 
@@ -425,6 +428,14 @@ impl Renderer {
         // image), so copying the data during the renderer initialization is fine.
         // There is a legacy way of doing it, that involves copying it as a buffer, and doing the
         // `encoder`, `staging_belt` dance (this is how vulkan works with its staging buffers).
+        // Notice that we can treat the texture as a buffer of bytes here, and later think about
+        // how we want to apply modifications to it. The `TextureView` is how the data will be
+        // actually used, so before we just need to specify what kind of bytes we have, how are
+        // they formatted, size, and usage.
+        // Later the `TextureView` will be created based on the `Texture`, but it doesn't really
+        // care about buffer stuff.
+        // And the `Sampler`s are even more independent, as they have no connection to neither
+        // `Texture` or `TextureView`.
         queue.write_texture(
             wgpu::TextureCopyView {
                 texture: &texture,
@@ -464,13 +475,63 @@ impl Renderer {
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_min_clamp: 0.0,
-            lod_max_clamp: 0.0,
+            lod_max_clamp: std::f32::MAX,
             // NOTE(alex): Texels will be compared to a value, and then the result will be used in
             // filtering operations (useful for shadow maps).
-            compare: Some(wgpu::CompareFunction::Always),
+            compare: None,
             // TODO(alex): Is there an equivalent to vulkan's
             // `VkPhysicalDeviceProperties.limits.maxSamplerAnisotropy`?
             anisotropy_clamp: NonZeroU8::new(16),
+        });
+        // NOTE(alex): Similar to how using uniforms require specifying the layout, before you can
+        // actually bind the data into the GPU (tell the GPU how this data should be used, how
+        // it's structured, which shaders use it). Similar to vulkan's
+        // `VkDescriptorSetLayoutBinding` and the `entries` are like `VkWriteDescriptorSet`.
+        //
+        // Keep in mind that this doesn't mean we can't transfer the texture data, the buffer
+        // doesn't care about these details, this is how we connect bytes to shaders.
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Texture bind group layout"),
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::SampledTexture {
+                            dimension: wgpu::TextureViewDimension::D2,
+                            component_type: wgpu::TextureComponentType::Uint,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        // TODO(alex): `comparison` has to do with linear filtering?
+                        ty: wgpu::BindingType::Sampler { comparison: false },
+                        count: None,
+                    },
+                ],
+            });
+        // NOTE(alex): `BindGroup`s are their own thing (separate from `BindGroupLayout`) as this
+        // allows us to swap out bind groups, as long as they share the same layout. So we could
+        // have different samplers here (with a different `anisotropy_clamp` value for example),
+        // and swap between them at runtime. The `RenderPipeline` only depends on the layout, not
+        // on the bind group data itself, so we don't even need to create a new pipeline if we
+        // just wanted to change the things here.
+        let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Texture bind group"),
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&texture_sampler),
+                },
+            ],
         });
 
         let staging_belt = wgpu::util::StagingBelt::new(1024);
@@ -519,7 +580,7 @@ impl Renderer {
             &swap_chain_descriptor,
             hello_vs,
             hello_fs,
-            &[&uniform_bind_group_layout],
+            &[&uniform_bind_group_layout, &texture_bind_group_layout],
             &[Vertex::DESCRIPTOR],
         );
 
@@ -541,7 +602,7 @@ impl Renderer {
             vertex_buffers: vec![vertex_buffer],
             index_buffers: vec![index_buffer],
             uniform_buffer,
-            bind_groups: vec![uniform_bind_group],
+            bind_groups: vec![uniform_bind_group, texture_bind_group],
             // glyph_brush,
             staging_belt,
             size: window_size,
