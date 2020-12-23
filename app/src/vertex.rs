@@ -63,26 +63,37 @@ pub fn cube(
     index: u32,
     color: glam::Vec3,
 ) -> (Vec<Vertex>, Vec<u32>) {
+    // WARNING(alex): Texture coordinates are Y-inverted!
+    // [0,0]------------------[1,0]
+    // ----------------------------
+    // ----------------------------
+    // [0,1]------------------[1,1]
+    // So we must invert them here (our origin in camera is [0,0], but texture origin is [0,1]).
+    let tex_o = glam::const_vec2!([0.0, 1.0]);
+    let tex_rd = glam::const_vec2!([1.0, 1.0]);
+    let tex_lu = glam::const_vec2!([0.0, 0.0]);
+    let tex_ru = glam::const_vec2!([1.0, 0.0]);
+
     let mut back = vec![
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.4, 0.9]),
+            texture_coordinates: tex_o,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.04, 0.5]),
+            texture_coordinates: tex_rd,
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.2, 0.05]),
+            texture_coordinates: tex_lu,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.9, 0.7]),
+            texture_coordinates: tex_ru,
         },
     ];
     let mut back_indices = vec![
@@ -98,22 +109,22 @@ pub fn cube(
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_o,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_rd,
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_lu,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_ru,
         },
     ];
     let mut front_indices = vec![
@@ -129,22 +140,22 @@ pub fn cube(
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z),
             color: glam::Vec3::new(0.0, 1.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_o,
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z + size),
             color: glam::Vec3::new(0.0, 1.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_rd,
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z),
             color: glam::Vec3::new(0.0, 1.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_lu,
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 1.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_ru,
         },
     ];
     let mut left_indices = vec![
@@ -160,22 +171,22 @@ pub fn cube(
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z),
             color: glam::Vec3::new(0.0, 1.0, 1.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_o,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z + size),
             color: glam::Vec3::new(0.0, 1.0, 1.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_rd,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z),
             color: glam::Vec3::new(0.0, 1.0, 1.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_lu,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 1.0, 1.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_ru,
         },
     ];
     let mut right_indices = vec![
@@ -191,22 +202,22 @@ pub fn cube(
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_o,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_rd,
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z),
             color: glam::Vec3::new(0.0, 0.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_lu,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z),
             color: glam::Vec3::new(0.0, 0.0, 0.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_ru,
         },
     ];
     let mut top_indices = vec![
@@ -222,22 +233,22 @@ pub fn cube(
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z + size),
             color: glam::Vec3::new(1.0, 1.0, 1.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_o,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z + size),
             color: glam::Vec3::new(1.0, 1.0, 1.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_rd,
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 1.0, 1.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_lu,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 1.0, 1.0),
-            texture_coordinates: glam::const_vec2!([0.0, 0.0]),
+            texture_coordinates: tex_ru,
         },
     ];
     let mut bottom_indices = vec![
