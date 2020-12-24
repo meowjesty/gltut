@@ -53,7 +53,7 @@ impl Vertex {
 
 /// Back -> red
 /// Front -> blue
-/// Left -> green
+/// Left -> red + blue
 /// Right -> green + blue
 /// Top -> black
 /// Bottom -> white
@@ -139,22 +139,22 @@ pub fn cube(
     let mut left = vec![
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z),
-            color: glam::Vec3::new(0.0, 1.0, 0.0),
+            color: glam::Vec3::new(1.0, 0.0, 1.0),
             texture_coordinates: tex_o,
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z + size),
-            color: glam::Vec3::new(0.0, 1.0, 0.0),
+            color: glam::Vec3::new(1.0, 0.0, 1.0),
             texture_coordinates: tex_rd,
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z),
-            color: glam::Vec3::new(0.0, 1.0, 0.0),
+            color: glam::Vec3::new(1.0, 0.0, 1.0),
             texture_coordinates: tex_lu,
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z + size),
-            color: glam::Vec3::new(0.0, 1.0, 0.0),
+            color: glam::Vec3::new(1.0, 0.0, 1.0),
             texture_coordinates: tex_ru,
         },
     ];

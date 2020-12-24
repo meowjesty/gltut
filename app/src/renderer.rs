@@ -42,6 +42,14 @@ pub struct Instance {
 
 impl Instance {
     pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<glam::Mat4>() as wgpu::BufferAddress;
+    /// This descriptor is a bit on the long side because we're doing a sort of manual conversion
+    /// into shader `mat4` type, if you red this as being [Vec4; 4] it becomes clearer that this
+    /// is a 4x4 matrix. Is there a simpler way of doing this? As it stands, having to specify
+    /// each `shader_location` is error prone, and incovenient.
+    ///
+    /// The big difference between this and a `VertexBufferDescriptor` is the `step_mode`.
+    ///
+    /// TODO(alex): Improving this probably ties in with using `struct Instance` in the `.vert`.
     pub const DESCRIPTOR: wgpu::VertexBufferDescriptor<'static> = wgpu::VertexBufferDescriptor {
         stride: Self::SIZE,
         step_mode: wgpu::InputStepMode::Instance,
@@ -69,7 +77,7 @@ impl Instance {
         ],
     };
 
-    pub fn model(&self) -> glam::Mat4 {
+    pub fn model_matrix(&self) -> glam::Mat4 {
         glam::Mat4::from_rotation_translation(self.rotation, self.position.xyz())
     }
 }
@@ -592,6 +600,11 @@ impl Renderer {
             ],
         });
 
+        // NOTE(alex): Instancing follows pretty much the same pattern as passing vertex data:
+        // - have a `VertexBufferDescriptor` detailing how the data is structured for the shader;
+        // - create a Buffer to put the instace data in;
+        // - use it in the shader;
+        // A good chunk of the code here is just about changing where each copy goes.
         const SPACE_BETWEEN: f32 = 5.0;
         let instances = (0..NUM_INSTANCES_PER_ROW)
             .flat_map(|z| {
@@ -599,10 +612,10 @@ impl Renderer {
                     let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
                     let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
 
-                    let position: glam::Vec3 =
-                        glam::Vec3::new(x as f32, 0.0, z as f32);
+                    let position: glam::Vec3 = glam::Vec3::new(x as f32, 0.0, z as f32);
 
                     let rotation = if position == glam::Vec3::zero() {
+                        // NOTE(alex): Quaternions can affect scale if they're not correct.
                         glam::Quat::from_axis_angle(glam::Vec3::unit_z(), f32::to_radians(0.0))
                     } else {
                         glam::Quat::from_axis_angle(
@@ -618,7 +631,10 @@ impl Renderer {
                 })
             })
             .collect::<Vec<_>>();
-        let instance_data = instances.iter().map(Instance::model).collect::<Vec<_>>();
+        let instance_data = instances
+            .iter()
+            .map(Instance::model_matrix)
+            .collect::<Vec<_>>();
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance buffer"),
             contents: bytemuck::cast_slice(&instance_data),
@@ -842,6 +858,9 @@ impl Renderer {
                     first_render_pass.draw_indexed(
                         0..world.indices.len() as u32,
                         0,
+                        // NOTE(alex): The main advantage of having this be a `Range<u32>` over
+                        // just a number, is that with ranges it becomes possible to skip/select
+                        // which instances to draw (how many copies).
                         0..self.instances.len() as _,
                     );
                 }
