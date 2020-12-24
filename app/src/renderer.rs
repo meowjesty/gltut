@@ -33,6 +33,49 @@ impl Uniforms {
     }
 }
 
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone, Pod, Zeroable)]
+pub struct Instance {
+    position: glam::Vec4,
+    rotation: glam::Quat,
+}
+
+impl Instance {
+    pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<glam::Mat4>() as wgpu::BufferAddress;
+    pub const DESCRIPTOR: wgpu::VertexBufferDescriptor<'static> = wgpu::VertexBufferDescriptor {
+        stride: Self::SIZE,
+        step_mode: wgpu::InputStepMode::Instance,
+        attributes: &[
+            wgpu::VertexAttributeDescriptor {
+                offset: 0,
+                shader_location: 3,
+                format: wgpu::VertexFormat::Float4,
+            },
+            wgpu::VertexAttributeDescriptor {
+                offset: core::mem::size_of::<glam::Vec4>() as wgpu::BufferAddress,
+                shader_location: 4,
+                format: wgpu::VertexFormat::Float4,
+            },
+            wgpu::VertexAttributeDescriptor {
+                offset: (core::mem::size_of::<glam::Vec4>() * 2) as wgpu::BufferAddress,
+                shader_location: 5,
+                format: wgpu::VertexFormat::Float4,
+            },
+            wgpu::VertexAttributeDescriptor {
+                offset: (core::mem::size_of::<glam::Vec4>() * 3) as wgpu::BufferAddress,
+                shader_location: 6,
+                format: wgpu::VertexFormat::Float4,
+            },
+        ],
+    };
+
+    pub fn model(&self) -> glam::Mat4 {
+        glam::Mat4::from_rotation_translation(self.rotation, self.position.xyz())
+    }
+}
+
+const NUM_INSTANCES_PER_ROW: u32 = 10;
+
 pub type Radians = f32;
 
 #[derive(Debug, Default)]
@@ -52,6 +95,7 @@ pub struct Camera {
     pub pitch: Radians,
 }
 
+// TODO(alex): Is this correct for right-handed coordinates?
 pub fn look_at_dir(eye: glam::Vec3, dir: glam::Vec3, up: glam::Vec3) -> glam::Mat4 {
     // NOTE(alex): Normalizing a vector that is already at length 1.0 changes nothing.
     let f = dir.normalize();
@@ -222,6 +266,8 @@ pub struct Renderer {
     /// it here in wgpu-land (doesn't exist), we just need to specify `wgpu::BufferUsage::COPY_DST`.
     staging_belt: wgpu::util::StagingBelt,
     size: dpi::PhysicalSize<u32>,
+    instances: Vec<Instance>,
+    instance_buffer: wgpu::Buffer,
 }
 
 impl Renderer {
@@ -419,6 +465,8 @@ impl Renderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
+            // TODO(alex): zeux said that this is the modern format that should be used, why?
+            // format: wgpu::TextureFormat::Depth32Float,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
             // NOTE(alex): `TextureUsage::SAMPLED` means optimal for shader, while
             // `TextureUsage::COPY_DST` is optimal as the destination in a transfer op (copy to).
@@ -519,6 +567,16 @@ impl Renderer {
         // and swap between them at runtime. The `RenderPipeline` only depends on the layout, not
         // on the bind group data itself, so we don't even need to create a new pipeline if we
         // just wanted to change the things here.
+        //
+        // Notice that we pass the `TextureView` and `Sampler` in the bind group creation,
+        // connecting (well, binding) the view and sampler we created for our texture, into the
+        // shader. It uses the layout to determine what goes where (in our case both go into
+        // fragment shader), and attaches the resources (view and sampler) to the binding.
+        //
+        // The tl;dr of these graphics APIs seems to be: have some resources, tell the API how
+        // they're structured (their purpose, where they go), link this idea of resources
+        // (the meta-resources, or descriptors) in CPU -> shaders, then copy the buffer with these
+        // resources to the GPU.
         let texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Texture bind group"),
             layout: &texture_bind_group_layout,
@@ -532,6 +590,39 @@ impl Renderer {
                     resource: wgpu::BindingResource::Sampler(&texture_sampler),
                 },
             ],
+        });
+
+        const SPACE_BETWEEN: f32 = 5.0;
+        let instances = (0..NUM_INSTANCES_PER_ROW)
+            .flat_map(|z| {
+                (0..NUM_INSTANCES_PER_ROW).map(move |x| {
+                    let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+                    let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+
+                    let position: glam::Vec3 =
+                        glam::Vec3::new(x as f32, 0.0, z as f32);
+
+                    let rotation = if position == glam::Vec3::zero() {
+                        glam::Quat::from_axis_angle(glam::Vec3::unit_z(), f32::to_radians(0.0))
+                    } else {
+                        glam::Quat::from_axis_angle(
+                            position.clone().normalize(),
+                            f32::to_radians(45.0),
+                        )
+                    };
+
+                    Instance {
+                        position: glam::Vec4::new(position.x, position.y, position.z, 1.0),
+                        rotation,
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let instance_data = instances.iter().map(Instance::model).collect::<Vec<_>>();
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance buffer"),
+            contents: bytemuck::cast_slice(&instance_data),
+            usage: wgpu::BufferUsage::VERTEX,
         });
 
         let staging_belt = wgpu::util::StagingBelt::new(1024);
@@ -581,7 +672,7 @@ impl Renderer {
             hello_vs,
             hello_fs,
             &[&uniform_bind_group_layout, &texture_bind_group_layout],
-            &[Vertex::DESCRIPTOR],
+            &[Vertex::DESCRIPTOR, Instance::DESCRIPTOR],
         );
 
         let render_pipelines = vec![hello_render_pipeline];
@@ -606,6 +697,8 @@ impl Renderer {
             // glyph_brush,
             staging_belt,
             size: window_size,
+            instances,
+            instance_buffer,
         }
     }
 
@@ -735,15 +828,22 @@ impl Renderer {
 
                     for (i, vertex_buffer) in self.vertex_buffers.iter().enumerate() {
                         first_render_pass.set_vertex_buffer(i as u32, vertex_buffer.slice(..));
-                        // NOTE(alex): wgpu API takes advantage of ranges to specify the offset
-                        // into the vertex buffer. `0..len()` means that the `gl_VertexIndex`
-                        // starts at `0`.
-                        // `instances` range is the same, but for the `gl_InstanceIndex` used in
-                        // instanced rendering.
-                        // In vulkan, this function call would look like `(0, 0)`.
-                        // first_render_pass.draw(0..world.vertices.len() as u32, 0..1);
-                        first_render_pass.draw_indexed(0..world.indices.len() as u32, 0, 0..1);
                     }
+
+                    first_render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+
+                    // NOTE(alex): wgpu API takes advantage of ranges to specify the offset
+                    // into the vertex buffer. `0..len()` means that the `gl_VertexIndex`
+                    // starts at `0`.
+                    // `instances` range is the same, but for the `gl_InstanceIndex` used in
+                    // instanced rendering.
+                    // In vulkan, this function call would look like `(0, 0)`.
+                    // first_render_pass.draw(0..world.vertices.len() as u32, 0..1);
+                    first_render_pass.draw_indexed(
+                        0..world.indices.len() as u32,
+                        0,
+                        0..self.instances.len() as _,
+                    );
                 }
 
                 // self.glyph_brush

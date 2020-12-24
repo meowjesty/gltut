@@ -224,6 +224,7 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
+    /*
     let (mut vertices, mut indices) = cube(
         glam::Vec3::new(5.0, 5.0, 0.0),
         5.0,
@@ -274,6 +275,14 @@ fn main() {
         vertices.append(&mut vs);
         indices.append(&mut is);
     }
+    */
+
+    let (vertices, indices) = cube(
+        glam::Vec3::new(0.0, 0.0, 0.0),
+        2.0,
+        0,
+        glam::Vec3::new(0.0, 1.0, 1.0),
+    );
 
     let mut world = World {
         // NOTE(alex): Position is done in counter-clockwise fashion, starting from the middle point
