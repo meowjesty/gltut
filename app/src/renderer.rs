@@ -196,6 +196,91 @@ pub struct World {
     pub(crate) uniforms: Uniforms,
 }
 
+pub struct Texture {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+}
+
+impl Texture {
+    pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+    /// NOTE(alex): Special kind of texture that is used for depth testing (**Depth Buffer**).
+    ///
+    /// This texture will be created as a render output (`OUTPUT_ATTACHMENT`, similar to how a
+    /// `SwapChain` is a render target).
+    ///
+    /// Just relying on Z-axis ordering doesn't work very well in 3D, we're getting weird
+    /// rendering behaviour where some sides disappear, even though they're still half in view.
+    /// Depth testing exists to solve this issue.
+    ///
+    /// The main idea here is to have a black and white texture that stores the _z_-coordinate of
+    /// the rendered pixels, and check (via the pipeline `depth_stencil_state.depth_compare`)
+    /// whether to keep or replace the data.
+    /// No need to sort objects to try and maintain a _z_-ordered set of draw calls.
+    pub fn create_depth_texture(
+        device: &wgpu::Device,
+        swap_chain_descriptor: &wgpu::SwapChainDescriptor,
+    ) -> Texture {
+        // NOTE(alex): Depth texture must be the same size of the screen, again, it kinds comes
+        // back to how similar this is to the swap chain image idea.
+        let size = wgpu::Extent3d {
+            width: swap_chain_descriptor.width,
+            height: swap_chain_descriptor.height,
+            depth: 1,
+        };
+
+        let descriptor = &wgpu::TextureDescriptor {
+            label: Some("Depth Texture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::DEPTH_FORMAT,
+            // NOTE(alex): `TextureUsage::OUTPUT_ATTACHMENT` is the same as we have in the
+            // `SwapChainDescriptor`, as this usage means we're rendering to this texture.
+            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::SAMPLED,
+        };
+        let texture = device.create_texture(&descriptor);
+
+        let view_descriptor = wgpu::TextureViewDescriptor {
+            label: Some("Depth Texture view"),
+            format: Some(Self::DEPTH_FORMAT),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            aspect: TextureAspect::All,
+            base_mip_level: 0,
+            level_count: NonZeroU32::new(1),
+            base_array_layer: 0,
+            array_layer_count: NonZeroU32::new(1),
+        };
+        let view = texture.create_view(&view_descriptor);
+
+        let sampler_descriptor = wgpu::SamplerDescriptor {
+            label: Some("Depth Texture sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            lod_min_clamp: -100.0,
+            lod_max_clamp: 100.0,
+            // NOTE(alex): This is not the actual depth testing compare function!
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            // TODO(alex): Is there an equivalent to vulkan's
+            // `VkPhysicalDeviceProperties.limits.maxSamplerAnisotropy`?
+            anisotropy_clamp: NonZeroU8::new(16),
+        };
+        let sampler = device.create_sampler(&sampler_descriptor);
+
+        Self {
+            texture,
+            view,
+            sampler,
+        }
+    }
+}
+
 /// TODO(alex): There needs to be a separation between things here and an actual `Pipeline`.
 /// As it stands, `Renderer::new()` will create a pipeline with very specific details, that
 /// can't be easily changed (I could set them in the `renderer` instance, but not a good solution),
@@ -276,6 +361,7 @@ pub struct Renderer {
     size: dpi::PhysicalSize<u32>,
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
+    depth_texture: Texture,
 }
 
 impl Renderer {
@@ -351,7 +437,15 @@ impl Renderer {
             }],
             // NOTE(alex): Part of the `Input Assembly`, what kind of geometry will be drawn.
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            depth_stencil_state: None,
+            // NOTE(alex): This does the depth testing.
+            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                format: Texture::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                // NOTE(alex): How the depth testing will compare z-ordering, tells when to discard
+                // a new pixel, `Less` means pixels will be drawn front-to-back.
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilStateDescriptor::default(),
+            }),
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint32,
                 vertex_buffers: &vertex_buffer_descriptors,
@@ -641,6 +735,8 @@ impl Renderer {
             usage: wgpu::BufferUsage::VERTEX,
         });
 
+        let depth_texture = Texture::create_depth_texture(&device, &swap_chain_descriptor);
+
         let staging_belt = wgpu::util::StagingBelt::new(1024);
 
         // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
@@ -715,6 +811,7 @@ impl Renderer {
             size: window_size,
             instances,
             instance_buffer,
+            depth_texture,
         }
     }
 
@@ -727,6 +824,10 @@ impl Renderer {
         self.swap_chain = self
             .device
             .create_swap_chain(&self.surface, &self.swap_chain_descriptor);
+        // NOTE(alex): Remember that the depth texture must remain the same size as the swap chain
+        // image.
+        self.depth_texture =
+            Texture::create_depth_texture(&self.device, &self.swap_chain_descriptor);
     }
 
     pub fn present(&mut self, world: &World, spawner: &impl task::LocalSpawn) {
@@ -826,7 +927,18 @@ impl Renderer {
                                     store: true,
                                 },
                             }],
-                            depth_stencil_attachment: None,
+                            // NOTE(alex): Depth testing, notice that we use the
+                            // `depth_texture.view`, and not the texture itself.
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachmentDescriptor {
+                                    attachment: &self.depth_texture.view,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: true,
+                                    }),
+                                    stencil_ops: None,
+                                },
+                            ),
                         });
 
                     first_render_pass.set_pipeline(&self.render_pipelines.first().unwrap());

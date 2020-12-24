@@ -170,22 +170,22 @@ pub fn cube(
     let mut right = vec![
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z),
-            color: glam::Vec3::new(0.0, 1.0, 1.0),
+            color: glam::Vec3::new(1.0, 0.0, 0.0),
             texture_coordinates: tex_o,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z + size),
-            color: glam::Vec3::new(0.0, 1.0, 1.0),
+            color: glam::Vec3::new(0.0, 1.0, 0.0),
             texture_coordinates: tex_rd,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z),
-            color: glam::Vec3::new(0.0, 1.0, 1.0),
+            color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_lu,
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z + size),
-            color: glam::Vec3::new(0.0, 1.0, 1.0),
+            color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_ru,
         },
     ];
