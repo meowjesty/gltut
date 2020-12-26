@@ -1,12 +1,29 @@
+#![feature(const_fn)]
+#![feature(const_trait_impl)]
+use std::{io, path};
+
 use bytemuck::{Pod, Zeroable};
+use wgpu::util::DeviceExt;
+
+use crate::renderer::Texture;
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq, Pod, Zeroable)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Pod, Zeroable)]
 pub struct Vertex {
     pub position: glam::Vec3,
     pub color: glam::Vec3,
     pub texture_coordinates: glam::Vec2,
+    pub normal: glam::Vec3,
 }
+
+// NOTE(alex): `const Traits` are not in Rust yet.
+// https://github.com/rust-lang/rust/pull/79287
+// pub trait SizeOf {
+//     const fn size_of() -> usize;
+// }
+
+pub const VEC2_SIZE: usize = core::mem::size_of::<glam::Vec2>();
+pub const VEC3_SIZE: usize = core::mem::size_of::<glam::Vec3>();
 
 impl Vertex {
     pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<Self>() as wgpu::BufferAddress;
@@ -21,13 +38,18 @@ impl Vertex {
                 format: wgpu::VertexFormat::Float3,
             },
             wgpu::VertexAttributeDescriptor {
-                offset: core::mem::size_of::<glam::Vec3>() as wgpu::BufferAddress,
+                offset: VEC3_SIZE as wgpu::BufferAddress,
                 shader_location: 1,
                 format: wgpu::VertexFormat::Float3,
             },
             wgpu::VertexAttributeDescriptor {
-                offset: (core::mem::size_of::<glam::Vec3>() * 2) as wgpu::BufferAddress,
+                offset: (VEC3_SIZE * 2) as wgpu::BufferAddress,
                 shader_location: 2,
+                format: wgpu::VertexFormat::Float2,
+            },
+            wgpu::VertexAttributeDescriptor {
+                offset: (VEC3_SIZE * 2 + VEC2_SIZE) as wgpu::BufferAddress,
+                shader_location: 7,
                 format: wgpu::VertexFormat::Float2,
             },
         ],
@@ -79,21 +101,25 @@ pub fn cube(
             position: glam::Vec3::new(origin.x, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
             texture_coordinates: tex_o,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
             texture_coordinates: tex_rd,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
             texture_coordinates: tex_lu,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
             texture_coordinates: tex_ru,
+            normal: Default::default(),
         },
     ];
     let mut back_indices = vec![
@@ -110,21 +136,25 @@ pub fn cube(
             position: glam::Vec3::new(origin.x, origin.y, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_o,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_rd,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_lu,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_ru,
+            normal: Default::default(),
         },
     ];
     let mut front_indices = vec![
@@ -141,21 +171,25 @@ pub fn cube(
             position: glam::Vec3::new(origin.x, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 1.0),
             texture_coordinates: tex_o,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z + size),
             color: glam::Vec3::new(1.0, 0.0, 1.0),
             texture_coordinates: tex_rd,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 1.0),
             texture_coordinates: tex_lu,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z + size),
             color: glam::Vec3::new(1.0, 0.0, 1.0),
             texture_coordinates: tex_ru,
+            normal: Default::default(),
         },
     ];
     let mut left_indices = vec![
@@ -172,21 +206,25 @@ pub fn cube(
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
             texture_coordinates: tex_o,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z + size),
             color: glam::Vec3::new(0.0, 1.0, 0.0),
             texture_coordinates: tex_rd,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_lu,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_ru,
+            normal: Default::default(),
         },
     ];
     let mut right_indices = vec![
@@ -203,21 +241,25 @@ pub fn cube(
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 0.0),
             texture_coordinates: tex_o,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 0.0),
             texture_coordinates: tex_rd,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z),
             color: glam::Vec3::new(0.0, 0.0, 0.0),
             texture_coordinates: tex_lu,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z),
             color: glam::Vec3::new(0.0, 0.0, 0.0),
             texture_coordinates: tex_ru,
+            normal: Default::default(),
         },
     ];
     let mut top_indices = vec![
@@ -234,21 +276,25 @@ pub fn cube(
             position: glam::Vec3::new(origin.x, origin.y, origin.z + size),
             color: glam::Vec3::new(1.0, 1.0, 1.0),
             texture_coordinates: tex_o,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z + size),
             color: glam::Vec3::new(1.0, 1.0, 1.0),
             texture_coordinates: tex_rd,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 1.0, 1.0),
             texture_coordinates: tex_lu,
+            normal: Default::default(),
         },
         Vertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 1.0, 1.0),
             texture_coordinates: tex_ru,
+            normal: Default::default(),
         },
     ];
     let mut bottom_indices = vec![
@@ -273,6 +319,139 @@ pub fn cube(
     back_indices.append(&mut bottom_indices);
 
     (back, back_indices)
+}
+
+#[derive(Debug)]
+pub struct Mesh {
+    name: String,
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    num_elements: u32,
+    material: usize,
+}
+
+impl Mesh {
+    pub fn new(file: String, device: &wgpu::Device) -> Mesh {
+        let (document, buffers, images) = gltf::import(file).unwrap();
+
+        // TODO(alex): Improve this quick hack to get a name.
+        let name = if let Some(mesh) = document.meshes().find(|mesh| mesh.name().is_some()) {
+            mesh.name().unwrap()
+        } else {
+            "Generic Mesh Name"
+        };
+
+        // TODO(alex): How do we improve this whole mess of cycling through the mesh primitives?
+        // Multiple `for` loops looks cleaner.
+        let primitives = document.meshes().flat_map(|mesh| mesh.primitives());
+
+        let positions = primitives
+            .clone()
+            .flat_map(|primitive| {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                reader.read_positions()
+            })
+            .flat_map(|positions| positions.map(|position| position.into()))
+            .collect::<Vec<glam::Vec3>>();
+
+        /*
+        let colors = primitives
+            .flat_map(|primitive| {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                reader.read_colors(what is set?)
+            })
+            .flat_map(|colors| colors.map(|color| color.into()))
+            .collect::<Vec<glam::Vec3>>();
+
+        let positions_colors = positions.into_iter().zip(colors.into_iter());
+        */
+
+        let vertices = positions
+            .into_iter()
+            .map(|position| Vertex {
+                position,
+                ..Default::default()
+            })
+            .collect::<Vec<Vertex>>();
+
+        let indices = primitives
+            .clone()
+            .flat_map(|primitive| {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                reader.read_indices()
+            })
+            .flat_map(|index| index.into_u32())
+            .collect::<Vec<u32>>();
+
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Mesh vertex buffer"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+        });
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Mesh index buffer"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsage::INDEX | wgpu::BufferUsage::COPY_DST,
+        });
+
+        Mesh {
+            name: name.to_string(),
+            vertex_buffer,
+            index_buffer,
+            num_elements: todo!(),
+            material: todo!(),
+        }
+    }
+
+    pub fn upload(
+        &self,
+        staging_belt: &mut wgpu::util::StagingBelt,
+        mut encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+    ) {
+        // for (index, vertices) in self.vertices.as_slice().iter().enumerate() {
+        //     staging_belt
+        //         .write_buffer(
+        //             &mut encoder,
+        //             &self.vertex_buffer,
+        //             index as u64 * Vertex::SIZE,
+        //             wgpu::BufferSize::new(Vertex::SIZE).unwrap(),
+        //             &device,
+        //         )
+        //         .copy_from_slice(bytemuck::bytes_of(vertices));
+        // }
+    }
+}
+
+#[derive(Debug)]
+pub struct Model {
+    pub meshes: Vec<Mesh>,
+    pub materials: Vec<Material>,
+}
+
+impl Model {
+    pub fn load<P: AsRef<path::Path>>(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        path: P,
+    ) -> Result<Self, String> {
+        let (document, buffers, images) = gltf::import(path).unwrap();
+
+        // TODO(alex): This is the loop format I was talking about above.
+        for mesh in document.meshes() {
+            for primitive in mesh.primitives() {}
+        }
+
+        unimplemented!()
+    }
+}
+
+#[derive(Debug)]
+pub struct Material {
+    pub name: String,
+    pub texture: Texture,
 }
 
 /*

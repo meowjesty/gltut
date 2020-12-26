@@ -1,6 +1,7 @@
 use std::{
-    iter,
+    io, iter,
     num::{NonZeroU32, NonZeroU8},
+    path,
 };
 
 use bytemuck::{Pod, Zeroable};
@@ -196,6 +197,7 @@ pub struct World {
     pub(crate) uniforms: Uniforms,
 }
 
+#[derive(Debug)]
 pub struct Texture {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -278,6 +280,125 @@ impl Texture {
             view,
             sampler,
         }
+    }
+
+    pub fn load<P: AsRef<path::Path>>(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        path: P,
+    ) -> Result<(Self, wgpu::CommandBuffer), String> {
+        let path_copy = path.as_ref().to_path_buf();
+        let label = path_copy.to_str();
+
+        let image = image::open(path).map_err(|err| err.to_string())?;
+        Self::from_image(device, queue, &image, label)
+    }
+
+    pub fn from_bytes(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        bytes: &[u8],
+    ) -> io::Result<Texture> {
+        let image = image::load_from_memory(bytes)?;
+        Self::from_image(device, queue, &image)
+    }
+
+    pub fn from_image(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        image: &image::DynamicImage,
+    ) -> io::Result<Texture> {
+        let rgba = image.to_rgba8();
+        let dimensions = image::GenericImageView::dimensions(&image);
+        let size = wgpu::Extent3d {
+            width: dimensions.0,
+            height: dimensions.1,
+            depth: 1,
+        };
+        // NOTE(alex): This is somewhat equivalent to the vulkan `VkImage`, the main difference is
+        // that memory handling is easier in wgpu.
+        // NOTE(alex): 1D images can be used to store an array of data or gradient, 2D are mainly
+        // used for textures (here), while 3D images can be used to store voxel volumes.
+        // NOTE(alex): You could use the shader to access the buffer of pixels directly, but
+        // it isn't optimal.
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Texture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            // TODO(alex): zeux said that this is the modern format that should be used, why?
+            // format: wgpu::TextureFormat::Depth32Float,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            // NOTE(alex): `TextureUsage::SAMPLED` means optimal for shader, while
+            // `TextureUsage::COPY_DST` is optimal as the destination in a transfer op (copy to).
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+        });
+        // NOTE(alex): We only have to write this image to a buffer once (if we're not changing the
+        // image), so copying the data during the renderer initialization is fine.
+        // There is a legacy way of doing it, that involves copying it as a buffer, and doing the
+        // `encoder`, `staging_belt` dance (this is how vulkan works with its staging buffers).
+        // Notice that we can treat the texture as a buffer of bytes here, and later think about
+        // how we want to apply modifications to it. The `TextureView` is how the data will be
+        // actually used, so before we just need to specify what kind of bytes we have, how are
+        // they formatted, size, and usage.
+        // Later the `TextureView` will be created based on the `Texture`, but it doesn't really
+        // care about buffer stuff.
+        // And the `Sampler`s are even more independent, as they have no connection to neither
+        // `Texture` or `TextureView`.
+        queue.write_texture(
+            wgpu::TextureCopyView {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            rgba,
+            wgpu::TextureDataLayout {
+                offset: 0,
+                bytes_per_row: 4 * size.width,
+                rows_per_image: size.height,
+            },
+            size,
+        );
+        // NOTE(alex): Images are accessed by views rather than directly.
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Texture view"),
+            format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            aspect: TextureAspect::All,
+            base_mip_level: 0,
+            level_count: NonZeroU32::new(1),
+            base_array_layer: 0,
+            array_layer_count: NonZeroU32::new(1),
+        });
+        // NOTE(alex): How the texture (the texels) will be mapped into geometry, what kind of
+        // filters should it apply.
+        // The sampler is independent of the image (texture), it's a descriptor that can be used
+        // for any image we want and it will apply these properties (filters) to it. It's an
+        // interface to extract colors from a texture.
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Texture sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: std::f32::MAX,
+            // NOTE(alex): Texels will be compared to a value, and then the result will be used in
+            // filtering operations (useful for shadow maps).
+            compare: None,
+            // TODO(alex): Is there an equivalent to vulkan's
+            // `VkPhysicalDeviceProperties.limits.maxSamplerAnisotropy`?
+            anisotropy_clamp: NonZeroU8::new(16),
+        });
+
+        Ok(Self {
+            texture,
+            view,
+            sampler,
+        })
     }
 }
 
@@ -547,92 +668,7 @@ impl Renderer {
         });
 
         let texture_bytes = include_bytes!("../../assets/tree.png");
-        let texture_image = image::load_from_memory(texture_bytes).unwrap();
-        let texture_rgba = texture_image.as_rgba8().unwrap();
-        let texture_dimensions = image::GenericImageView::dimensions(&texture_image);
-        let texture_size = wgpu::Extent3d {
-            width: texture_dimensions.0,
-            height: texture_dimensions.1,
-            depth: 1,
-        };
-        // NOTE(alex): This is somewhat equivalent to the vulkan `VkImage`, the main difference is
-        // that memory handling is easier in wgpu.
-        // NOTE(alex): 1D images can be used to store an array of data or gradient, 2D are mainly
-        // used for textures (here), while 3D images can be used to store voxel volumes.
-        // NOTE(alex): You could use the shader to access the buffer of pixels directly, but
-        // it isn't optimal.
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Texture"),
-            size: texture_size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            // TODO(alex): zeux said that this is the modern format that should be used, why?
-            // format: wgpu::TextureFormat::Depth32Float,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            // NOTE(alex): `TextureUsage::SAMPLED` means optimal for shader, while
-            // `TextureUsage::COPY_DST` is optimal as the destination in a transfer op (copy to).
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
-        });
-        // NOTE(alex): We only have to write this image to a buffer once (if we're not changing the
-        // image), so copying the data during the renderer initialization is fine.
-        // There is a legacy way of doing it, that involves copying it as a buffer, and doing the
-        // `encoder`, `staging_belt` dance (this is how vulkan works with its staging buffers).
-        // Notice that we can treat the texture as a buffer of bytes here, and later think about
-        // how we want to apply modifications to it. The `TextureView` is how the data will be
-        // actually used, so before we just need to specify what kind of bytes we have, how are
-        // they formatted, size, and usage.
-        // Later the `TextureView` will be created based on the `Texture`, but it doesn't really
-        // care about buffer stuff.
-        // And the `Sampler`s are even more independent, as they have no connection to neither
-        // `Texture` or `TextureView`.
-        queue.write_texture(
-            wgpu::TextureCopyView {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            texture_rgba,
-            wgpu::TextureDataLayout {
-                offset: 0,
-                bytes_per_row: 4 * texture_dimensions.0,
-                rows_per_image: texture_dimensions.1,
-            },
-            texture_size,
-        );
-        // NOTE(alex): Images are accessed by views rather than directly.
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("Texture view"),
-            format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
-            dimension: Some(wgpu::TextureViewDimension::D2),
-            aspect: TextureAspect::All,
-            base_mip_level: 0,
-            level_count: NonZeroU32::new(1),
-            base_array_layer: 0,
-            array_layer_count: NonZeroU32::new(1),
-        });
-        // NOTE(alex): How the texture (the texels) will be mapped into geometry, what kind of
-        // filters should it apply.
-        // The sampler is independent of the image (texture), it's a descriptor that can be used
-        // for any image we want and it will apply these properties (filters) to it. It's an
-        // interface to extract colors from a texture.
-        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Texture sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            lod_min_clamp: 0.0,
-            lod_max_clamp: std::f32::MAX,
-            // NOTE(alex): Texels will be compared to a value, and then the result will be used in
-            // filtering operations (useful for shadow maps).
-            compare: None,
-            // TODO(alex): Is there an equivalent to vulkan's
-            // `VkPhysicalDeviceProperties.limits.maxSamplerAnisotropy`?
-            anisotropy_clamp: NonZeroU8::new(16),
-        });
+        let texture = Texture::from_bytes(&device, &queue, texture_bytes).unwrap();
         // NOTE(alex): Similar to how using uniforms require specifying the layout, before you can
         // actually bind the data into the GPU (tell the GPU how this data should be used, how
         // it's structured, which shaders use it). Similar to vulkan's
@@ -685,11 +721,11 @@ impl Renderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                    resource: wgpu::BindingResource::TextureView(&texture.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&texture_sampler),
+                    resource: wgpu::BindingResource::Sampler(&texture.sampler),
                 },
             ],
         });
