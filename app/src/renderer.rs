@@ -7,6 +7,7 @@ use std::{
 use bytemuck::{Pod, Zeroable};
 use futures::{task, task::LocalSpawnExt};
 use glam::swizzles::*;
+use image::GenericImageView;
 use log::info;
 use wgpu::{util::DeviceExt, BindGroupLayoutEntry, SwapChainDescriptor, TextureAspect};
 use wgpu_glyph::{ab_glyph, GlyphBrushBuilder};
@@ -286,20 +287,20 @@ impl Texture {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         path: P,
-    ) -> Result<(Self, wgpu::CommandBuffer), String> {
+    ) -> Result<Self, String> {
         let path_copy = path.as_ref().to_path_buf();
         let label = path_copy.to_str();
 
         let image = image::open(path).map_err(|err| err.to_string())?;
-        Self::from_image(device, queue, &image, label)
+        Self::from_image(device, queue, &image)
     }
 
     pub fn from_bytes(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         bytes: &[u8],
-    ) -> io::Result<Texture> {
-        let image = image::load_from_memory(bytes)?;
+    ) -> Result<Texture, String> {
+        let image = image::load_from_memory(bytes).map_err(|err| err.to_string())?;
         Self::from_image(device, queue, &image)
     }
 
@@ -307,9 +308,9 @@ impl Texture {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         image: &image::DynamicImage,
-    ) -> io::Result<Texture> {
+    ) -> Result<Texture, String> {
         let rgba = image.to_rgba8();
-        let dimensions = image::GenericImageView::dimensions(&image);
+        let dimensions = image.dimensions();
         let size = wgpu::Extent3d {
             width: dimensions.0,
             height: dimensions.1,
@@ -352,7 +353,7 @@ impl Texture {
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
-            rgba,
+            &rgba,
             wgpu::TextureDataLayout {
                 offset: 0,
                 bytes_per_row: 4 * size.width,
