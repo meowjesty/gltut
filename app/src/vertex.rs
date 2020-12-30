@@ -1,5 +1,6 @@
 #![feature(const_fn)]
 #![feature(const_trait_impl)]
+use core::mem::*;
 use std::{io, path};
 
 use bytemuck::{Pod, Zeroable};
@@ -22,12 +23,12 @@ pub struct Vertex {
 //     const fn size_of() -> usize;
 // }
 
-pub const VEC2_SIZE: usize = core::mem::size_of::<glam::Vec2>();
-pub const VEC3_SIZE: usize = core::mem::size_of::<glam::Vec3>();
+pub const VEC2_SIZE: usize = size_of::<glam::Vec2>();
+pub const VEC3_SIZE: usize = size_of::<glam::Vec3>();
 
 impl Vertex {
     // pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<Self>() as wgpu::BufferAddress;
-    pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress;
+    pub const SIZE: wgpu::BufferAddress = size_of::<[f32; 3]>() as wgpu::BufferAddress;
     pub const DESCRIPTOR: wgpu::VertexBufferDescriptor<'static> = wgpu::VertexBufferDescriptor {
         stride: Self::SIZE,
         step_mode: wgpu::InputStepMode::Vertex,

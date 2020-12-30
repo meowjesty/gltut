@@ -84,7 +84,7 @@ impl Instance {
     }
 }
 
-const NUM_INSTANCES_PER_ROW: u32 = 3;
+const NUM_INSTANCES_PER_ROW: u32 = 5;
 
 pub type Radians = f32;
 
@@ -484,7 +484,7 @@ pub struct Renderer {
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
     depth_texture: Texture,
-    indices: usize,
+    num_indices: usize,
 }
 
 impl Renderer {
@@ -570,6 +570,12 @@ impl Renderer {
                 stencil: wgpu::StencilStateDescriptor::default(),
             }),
             vertex_state: wgpu::VertexStateDescriptor {
+                // NOTE(alex): `IndexFormat` for 3D models in glTF will be specified in the json
+                // file, so we can't really create the pipeline before we've looked through our
+                // model data.
+                // TODO(alex): This brings a new question of how do we have glTF models with
+                // different `IndexFormat`s? Is this even desirable? Probably not, but is there a
+                // way to convert the files to use the desired format?
                 // index_format: wgpu::IndexFormat::Uint32,
                 index_format: wgpu::IndexFormat::Uint16,
                 vertex_buffers: &vertex_buffer_descriptors,
@@ -774,8 +780,6 @@ impl Renderer {
             usage: wgpu::BufferUsage::VERTEX,
         });
 
-        let depth_texture = Texture::create_depth_texture(&device, &swap_chain_descriptor);
-
         let staging_belt = wgpu::util::StagingBelt::new(1024);
 
         /*
@@ -838,6 +842,8 @@ impl Renderer {
             }
         }
         */
+        // TODO(alex): Try out the higher level API, now that I have a better understanding of the
+        // glTF formats, and we know the renderer is working.
         let (positions, (indices, indices_count)) = debug_gltf_json();
 
         // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
@@ -880,6 +886,9 @@ impl Renderer {
             // transformations to the vertices themselves, but the indices stay constant.
             usage: wgpu::BufferUsage::INDEX,
         });
+
+        let depth_texture = Texture::create_depth_texture(&device, &swap_chain_descriptor);
+
         let hello_render_pipeline = Renderer::create_render_pipeline(
             Some("Pipeline: Hello"),
             &device,
@@ -917,7 +926,7 @@ impl Renderer {
             depth_texture,
             // NOTE(alex): When dealing with buffers directly, we want to pass the number of index
             // elements, not the length of the buffer itself.
-            indices: indices_count as usize,
+            num_indices: indices_count as usize,
         }
     }
 
@@ -1021,8 +1030,8 @@ impl Renderer {
                                 ops: wgpu::Operations {
                                     load: wgpu::LoadOp::Clear(wgpu::Color {
                                         r: 0.1,
-                                        g: 0.1,
-                                        b: 0.1,
+                                        g: 0.2,
+                                        b: 0.3,
                                         a: 1.0,
                                     }),
                                     store: true,
@@ -1057,6 +1066,7 @@ impl Renderer {
 
                     for (i, vertex_buffer) in self.vertex_buffers.iter().enumerate() {
                         first_render_pass.set_vertex_buffer(i as u32, vertex_buffer.slice(..));
+                        assert!(i < 1);
                     }
 
                     first_render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
@@ -1071,8 +1081,7 @@ impl Renderer {
                     first_render_pass.draw_indexed(
                         // 0..world.indices.len() as u32,
                         // 0..self.indices as u32,
-                        // FIXME(alex): The problem is this number, it's a limit.
-                        0..self.indices as u32,
+                        0..self.num_indices as u32,
                         0,
                         // NOTE(alex): The main advantage of having this be a `Range<u32>` over
                         // just a number, is that with ranges it becomes possible to skip/select
