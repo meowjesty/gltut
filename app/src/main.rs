@@ -1,5 +1,6 @@
 use std::{
     f32::consts::{FRAC_PI_2, PI},
+    path,
     time::Instant,
 };
 
@@ -205,8 +206,117 @@ fn handle_input(event: &DeviceEvent, world: &mut World, delta_time: f32) {
     }
 }
 
+fn debug_glb() {
+    let path = path::Path::new("./assets/kitten.gltf");
+    let (document, buffers, images) = gltf::import(path).expect("Could not open gltf file.");
+
+    // TODO(alex): This is the loop format I was talking about above.
+    // let mut positions: Vec<glam::Vec3> = Vec::with_capacity(32 * 1024);
+    // let mut indices: Vec<u32> = Vec::with_capacity(32 * 1024);
+    // NOTE(alex): So apparentely there is no need to translate the positions, normals and so on
+    // into our custom structures, it seems like a waste of effort when glTF already has everything
+    // nicely packed into its buffers.
+    // To access we index into each buffer by type, grab from offset to length + offset and look
+    // up what type of buffer data this is (`target`).
+    // It looks like there are more aspects to this whole process, like how to handle the whole
+    // scene, maybe we can navigate from scene->meshes->buffers? Would this be neccessary though?
+    // And finally, how would we change the positions, when all we have are buffers of data, but no
+    // way do stuff like `vertex.x * some_rotation * delta_time`? I'll start with this direct
+    // approach of buffer->gpu, and later I see how to efficiently load individual vertices into
+    // a `Vertex`, then `Mesh` and whatever else is needed.
+    // I'm not even sure right now what transform movement entails.
+    // Well, thinking about it a bit better, to change position we could just pass the
+    // transformation value (vector or matrix) to the shader, and change the vertices there, as
+    // the shader will have complete access to each vertex.
+    for mesh in document.meshes() {
+        for primitive in mesh.primitives() {
+            let position_accessor = primitive.get(&gltf::Semantic::Positions).unwrap();
+            // TODO(alex): The buffer view in glTF has a `buffer: 0` that indicates the `index`
+            // into the `buffers` of the binary document.
+            // We should use it in the `&buffers.get(0)`. qr
+            let position_view = position_accessor.view().unwrap();
+            let position_buffer = position_view.buffer();
+            info!("Buffers len {:?}", buffers.len());
+            let positions = &buffers.get(0).unwrap()
+                [position_view.offset()..position_view.offset() + position_view.length()];
+            let indices_accessor = primitive.indices().unwrap();
+            let indices_view = indices_accessor.view().unwrap();
+            let indices_buffer = indices_view.buffer();
+            let indices = &buffers.get(0).unwrap()
+                [indices_view.offset()..indices_view.offset() + indices_view.length()];
+            info!("position {:?} indices {:?}", positions.len(), indices.len());
+            assert!(!positions.is_empty());
+        }
+    }
+}
+
+fn debug_gltf_json<'x>() -> (&'x [u8], (&'x [u8], u32)) {
+    use gltf::json::{accessor::*, mesh::*, *};
+    let kitten = include_bytes!("../../assets/kitten.gltf");
+    let binary = include_bytes!("../../assets/kitten_data.bin");
+    let mut indices = None;
+    let mut positions = None;
+    let mut normals = None;
+    let root: Root = Root::from_slice(kitten).unwrap();
+    for mesh in root.meshes {
+        for primitive in mesh.primitives {
+            // NOTE(alex): Load indices buffer.
+            if let Some(indices_index) = primitive.indices {
+                if let Some(accessor) = root.accessors.get(indices_index.value()) {
+                    let count = accessor.count;
+                    let view_index = accessor.buffer_view.unwrap().value();
+                    let view = root.buffer_views.get(view_index).unwrap();
+                    let offset = view.byte_offset.unwrap() as usize;
+                    let length = view.byte_length as usize;
+                    let indices_buffer = &binary[offset..offset + length];
+                    indices = Some((indices_buffer, count));
+                }
+            }
+
+            for (semantic, accessor) in primitive.attributes {
+                if let Some(accessor) = root.accessors.get(accessor.value()) {
+                    let view_index = accessor.buffer_view.unwrap().value();
+                    let offset = accessor.byte_offset as usize;
+                    let count = accessor.count as usize;
+                    /*
+                    let GenericComponentType(component_type) = accessor.component_type.unwrap();
+                    match component_type {
+                        I8 => (),
+                        U8 => (),
+                        I16 => (),
+                        U16 => (),
+                        U32 => (),
+                        F32 => (),
+                    }
+                    */
+                    let type_ = accessor.type_.unwrap();
+                    let size_bytes = match type_ {
+                        Type::Scalar => core::mem::size_of::<f32>(),
+                        Type::Vec3 => core::mem::size_of::<[f32; 3]>(),
+                        _ => core::mem::size_of::<u32>(),
+                    };
+                    let length = count * size_bytes;
+                    let view = root.buffer_views.get(view_index).unwrap();
+                    let buffer = &binary[offset..offset + length];
+
+                    match semantic.unwrap() {
+                        Semantic::Positions => positions = Some(buffer),
+                        Semantic::Normals => normals = Some(buffer),
+                        _ => (),
+                    }
+                }
+            }
+        }
+    }
+    (positions.unwrap(), indices.unwrap())
+}
+
 fn main() {
     let _logger = setup_logger().unwrap();
+
+    // debug_glb();
+    // debug_gltf_json();
+    // panic!("Debugging.");
 
     let (mut pool, spawner) = {
         let local_pool = futures::executor::LocalPool::new();

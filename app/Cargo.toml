@@ -18,7 +18,8 @@ image = "*"
 log = "*"
 fern = "*"
 chrono = "*"
-gltf = { git = "https://github.com/gltf-rs/gltf", features = ["names"] }
+gltf = { git = "https://github.com/gltf-rs/gltf", features = ["names", "import"] }
+# gltf-json = { version = "*", features = ["names", "import"] }
 
 [build-dependencies]
 anyhow = "*"

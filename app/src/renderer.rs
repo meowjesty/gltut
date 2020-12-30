@@ -7,13 +7,13 @@ use std::{
 use bytemuck::{Pod, Zeroable};
 use futures::{task, task::LocalSpawnExt};
 use glam::swizzles::*;
-use image::GenericImageView;
+use image::{imageops::index_colors, GenericImageView};
 use log::info;
 use wgpu::{util::DeviceExt, BindGroupLayoutEntry, SwapChainDescriptor, TextureAspect};
 use wgpu_glyph::{ab_glyph, GlyphBrushBuilder};
 use winit::{dpi, window};
 
-use crate::{vertex::Vertex, CameraController};
+use crate::{debug_gltf_json, vertex::Vertex, CameraController};
 
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone, Pod, Zeroable)]
@@ -84,7 +84,7 @@ impl Instance {
     }
 }
 
-const NUM_INSTANCES_PER_ROW: u32 = 10;
+const NUM_INSTANCES_PER_ROW: u32 = 3;
 
 pub type Radians = f32;
 
@@ -484,6 +484,7 @@ pub struct Renderer {
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
     depth_texture: Texture,
+    indices: usize,
 }
 
 impl Renderer {
@@ -569,7 +570,8 @@ impl Renderer {
                 stencil: wgpu::StencilStateDescriptor::default(),
             }),
             vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint32,
+                // index_format: wgpu::IndexFormat::Uint32,
+                index_format: wgpu::IndexFormat::Uint16,
                 vertex_buffers: &vertex_buffer_descriptors,
             },
             sample_count: 1,
@@ -776,6 +778,68 @@ impl Renderer {
 
         let staging_belt = wgpu::util::StagingBelt::new(1024);
 
+        /*
+        let path = path::Path::new("./assets/kitten.gltf");
+        let (document, buffers, images) = gltf::import(path).expect("Could not open gltf file.");
+        let mut positions = None;
+        let mut normals = None;
+        let mut indices = None;
+        for mesh in document.meshes() {
+            for primitive in mesh.primitives() {
+                if let Some(accessor) = primitive.indices() {
+                    let view = accessor.view().unwrap();
+                    let index = view.buffer().index();
+                    let offset = view.offset();
+                    let length = view.length();
+                    indices = Some(&buffers.get(index).unwrap()[offset..offset + length]);
+
+                    println!(
+                        "primitive: offset {:?} length {:?} index {:?}",
+                        offset, length, index
+                    );
+                }
+
+                for (semantic, accessor) in primitive.attributes() {
+                    let view = accessor.view().unwrap();
+                    let offset = view.offset();
+                    let length = view.length();
+                    // let stride = view.stride().unwrap_or(1);
+                    let buffer_view = view.buffer();
+                    let index = buffer_view.index();
+                    let buffer = &buffers.get(index).unwrap()[offset..offset + length];
+
+                    let offset = accessor.offset() * accessor.data_type().size();
+                    let length = accessor.count() * accessor.data_type().size();
+
+                    /*
+                    semantic: offset 0 length 59424 index 0
+                    semantic: offset 713088 length 59424 index 0
+                                        */
+
+                    println!(
+                        "semantic {:?}: offset {:?} length {:?} index {:?}",
+                        semantic, offset, length, index
+                    );
+
+                    match semantic {
+                        gltf::Semantic::Positions => {
+                            positions = Some(&buffer[offset..offset + length]);
+                        }
+                        gltf::Semantic::Normals => {
+                            normals = Some(&buffer[offset..offset + length]);
+                        }
+                        gltf::Semantic::Tangents => {}
+                        gltf::Semantic::Colors(_) => {}
+                        gltf::Semantic::TexCoords(_) => {}
+                        gltf::Semantic::Joints(_) => {}
+                        gltf::Semantic::Weights(_) => {}
+                    }
+                }
+            }
+        }
+        */
+        let (positions, (indices, indices_count)) = debug_gltf_json();
+
         // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
         // so it makes sense to handle every kind of possible `VertexBufferDescriptor` during
         // initialization (it doesn't seems to be a configurable feature). It might be refactored
@@ -796,7 +860,8 @@ impl Renderer {
         // (before they're used, of course).
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&world.vertices),
+            // contents: bytemuck::cast_slice(&world.vertices),
+            contents: positions,
             // NOTE(alex): `usage: COPY_DST` is related to the staging buffers idea. This means that
             // this buffer will be used as the destination for some data.
             // The kind of buffer must also be specified, so you need the `VERTEX` usage here.
@@ -804,7 +869,8 @@ impl Renderer {
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(&world.indices),
+            // contents: bytemuck::cast_slice(&world.indices),
+            contents: indices,
             // NOTE(alex): We don't need `COPY_DST` here because this buffer won't be changing
             // value, if we think about these indices as being 1 geometric figure, they'll remain
             // the same, unless you wanted to quickly change it from a rectangle to some other
@@ -849,6 +915,9 @@ impl Renderer {
             instances,
             instance_buffer,
             depth_texture,
+            // NOTE(alex): When dealing with buffers directly, we want to pass the number of index
+            // elements, not the length of the buffer itself.
+            indices: indices_count as usize,
         }
     }
 
@@ -868,11 +937,6 @@ impl Renderer {
     }
 
     pub fn present(&mut self, world: &World, spawner: &impl task::LocalSpawn) {
-        // for vertex_buffer in self.vertex_buffers.as_slice() {
-        //     self.queue
-        //         .write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&world.vertices));
-        // }
-
         // NOTE(alex): To draw a triangle, the encoder sequence of commands is:
         // 1 - Begin the render pass;
         // 2 - Bind the pipeline;
@@ -896,38 +960,38 @@ impl Renderer {
                 label: Some("Render Encoder"),
             });
 
-        for (index, vertices) in world.vertices.as_slice().iter().enumerate() {
-            // NOTE(alex): My understanding of the `StagingBelt` so far is that, it's an easier
-            // API to use than having staging buffers.
-            // The staging buffers usage (for a vertex buffer) would be:
-            // 1. Have 2 buffers, 1-CPU and 1-GPU bound;
-            // 2. The GPU buffer has the copy attribute;
-            // 3. We write the data into the CPU buffer whenever we want;
-            // 4. Copy the CPU buffer to the GPU buffer when it's time to render the results;
-            // 5. This is achieved with the `queue`;
-            // Meanwhile the staging belt will handle this double buffering for us (including
-            // the synchronization neccessary), and we just call `copy_from_slice(vertices)`.
-            // The only handling we have to do, is to `recall` the buffers after we submitted
-            // every change (including render pass) to the queue. This is needed to "unblock" the
-            // buffers.
-            // It's okay to create only 1 big vertex buffer (any kind of buffer), and we keep
-            // writing and recalling from it (this buffer is a GPU buffer of the staging buffer
-            // way), and any other vertex buffer we have, may be used for the different layouts
-            // required by other vertex shaders. In this example, so far, we only need 1 vertex
-            // buffer, and 1 uniform buffer (there's only 1 buffer layout for each).
-            self.staging_belt
-                .write_buffer(
-                    &mut encoder,
-                    self.vertex_buffers.first().unwrap(),
-                    index as u64 * Vertex::SIZE,
-                    wgpu::BufferSize::new(Vertex::SIZE).unwrap(),
-                    &self.device,
-                )
-                .copy_from_slice(bytemuck::bytes_of(vertices));
+        // for (index, vertices) in world.vertices.as_slice().iter().enumerate() {
+        // NOTE(alex): My understanding of the `StagingBelt` so far is that, it's an easier
+        // API to use than having staging buffers.
+        // The staging buffers usage (for a vertex buffer) would be:
+        // 1. Have 2 buffers, 1-CPU and 1-GPU bound;
+        // 2. The GPU buffer has the copy attribute;
+        // 3. We write the data into the CPU buffer whenever we want;
+        // 4. Copy the CPU buffer to the GPU buffer when it's time to render the results;
+        // 5. This is achieved with the `queue`;
+        // Meanwhile the staging belt will handle this double buffering for us (including
+        // the synchronization neccessary), and we just call `copy_from_slice(vertices)`.
+        // The only handling we have to do, is to `recall` the buffers after we submitted
+        // every change (including render pass) to the queue. This is needed to "unblock" the
+        // buffers.
+        // It's okay to create only 1 big vertex buffer (any kind of buffer), and we keep
+        // writing and recalling from it (this buffer is a GPU buffer of the staging buffer
+        // way), and any other vertex buffer we have, may be used for the different layouts
+        // required by other vertex shaders. In this example, so far, we only need 1 vertex
+        // buffer, and 1 uniform buffer (there's only 1 buffer layout for each).
+        // self.staging_belt
+        //     .write_buffer(
+        //         &mut encoder,
+        //         self.vertex_buffers.first().unwrap(),
+        //         index as u64 * Vertex::SIZE,
+        //         wgpu::BufferSize::new(Vertex::SIZE).unwrap(),
+        //         &self.device,
+        //     )
+        //     .copy_from_slice(bytemuck::bytes_of(vertices));
 
-            // NOTE(alex): This is how you would use a more traditional staging buffer.
-            // encoder.copy_buffer_to_buffer(......)
-        }
+        // NOTE(alex): This is how you would use a more traditional staging buffer.
+        // encoder.copy_buffer_to_buffer(......)
+        // }
 
         self.staging_belt
             .write_buffer(
@@ -1005,7 +1069,10 @@ impl Renderer {
                     // In vulkan, this function call would look like `(0, 0)`.
                     // first_render_pass.draw(0..world.vertices.len() as u32, 0..1);
                     first_render_pass.draw_indexed(
-                        0..world.indices.len() as u32,
+                        // 0..world.indices.len() as u32,
+                        // 0..self.indices as u32,
+                        // FIXME(alex): The problem is this number, it's a limit.
+                        0..self.indices as u32,
                         0,
                         // NOTE(alex): The main advantage of having this be a `Range<u32>` over
                         // just a number, is that with ranges it becomes possible to skip/select

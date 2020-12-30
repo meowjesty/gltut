@@ -26,34 +26,47 @@ pub const VEC2_SIZE: usize = core::mem::size_of::<glam::Vec2>();
 pub const VEC3_SIZE: usize = core::mem::size_of::<glam::Vec3>();
 
 impl Vertex {
-    pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<Self>() as wgpu::BufferAddress;
+    // pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<Self>() as wgpu::BufferAddress;
+    pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress;
     pub const DESCRIPTOR: wgpu::VertexBufferDescriptor<'static> = wgpu::VertexBufferDescriptor {
         stride: Self::SIZE,
         step_mode: wgpu::InputStepMode::Vertex,
         // attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3],
-        attributes: &[
-            wgpu::VertexAttributeDescriptor {
-                offset: 0,
-                shader_location: 0,
-                format: wgpu::VertexFormat::Float3,
-            },
-            wgpu::VertexAttributeDescriptor {
-                offset: VEC3_SIZE as wgpu::BufferAddress,
-                shader_location: 1,
-                format: wgpu::VertexFormat::Float3,
-            },
-            wgpu::VertexAttributeDescriptor {
-                offset: (VEC3_SIZE * 2) as wgpu::BufferAddress,
-                shader_location: 2,
-                format: wgpu::VertexFormat::Float2,
-            },
-            wgpu::VertexAttributeDescriptor {
-                offset: (VEC3_SIZE * 2 + VEC2_SIZE) as wgpu::BufferAddress,
-                shader_location: 7,
-                format: wgpu::VertexFormat::Float2,
-            },
-        ],
+        attributes: &[wgpu::VertexAttributeDescriptor {
+            offset: 0,
+            shader_location: 0,
+            format: wgpu::VertexFormat::Float3,
+        }],
     };
+
+    pub const DESCRIPTOR_CUSTOM: wgpu::VertexBufferDescriptor<'static> =
+        wgpu::VertexBufferDescriptor {
+            stride: Self::SIZE,
+            step_mode: wgpu::InputStepMode::Vertex,
+            // attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3],
+            attributes: &[
+                wgpu::VertexAttributeDescriptor {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float3,
+                },
+                wgpu::VertexAttributeDescriptor {
+                    offset: VEC3_SIZE as wgpu::BufferAddress,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float3,
+                },
+                wgpu::VertexAttributeDescriptor {
+                    offset: (VEC3_SIZE * 2) as wgpu::BufferAddress,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float2,
+                },
+                wgpu::VertexAttributeDescriptor {
+                    offset: (VEC3_SIZE * 2 + VEC2_SIZE) as wgpu::BufferAddress,
+                    shader_location: 7,
+                    format: wgpu::VertexFormat::Float2,
+                },
+            ],
+        };
 
     // pub fn descriptor_3d<'x>() -> Box<wgpu::VertexBufferDescriptor<'x>> {
     //     let mut attributes = wgpu::vertex_attr_array![0 => Float3, 1 => Float3];
@@ -430,23 +443,40 @@ pub struct Model {
     pub materials: Vec<Material>,
 }
 
-impl Model {
-    pub fn load<P: AsRef<path::Path>>(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        layout: &wgpu::BindGroupLayout,
-        path: P,
-    ) -> Result<Self, String> {
-        let (document, buffers, images) = gltf::import(path).unwrap();
+// impl Model {
+//     pub fn load<P: AsRef<path::Path>>(
+//         device: &wgpu::Device,
+//         queue: &wgpu::Queue,
+//         layout: &wgpu::BindGroupLayout,
+//         path: P,
+//     ) -> Result<Self, String> {
+//         let (document, buffers, images) = gltf::import(path).map_err(|err| err.to_string())?;
 
-        // TODO(alex): This is the loop format I was talking about above.
-        for mesh in document.meshes() {
-            for primitive in mesh.primitives() {}
-        }
+//         // TODO(alex): This is the loop format I was talking about above.
+//         let mut positions: Vec<glam::Vec3> = Vec::with_capacity(32 * 1024);
+//         let mut indices: Vec<u32> = Vec::with_capacity(32 * 1024);
+//         for mesh in document.meshes() {
+//             for primitive in mesh.primitives() {
+//                 let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+//                 if let Some(iter) = reader.read_positions() {
+//                     for position in iter {
+//                         positions.push(position.into());
+//                     }
+//                 };
+//                 if let Some(read_indices) = reader.read_indices() {
+//                     for index in read_indices.into_u32() {
+//                         indices.push(index);
+//                     }
+//                 }
+//             }
+//         }
 
-        unimplemented!()
-    }
-}
+//         Ok(Model {
+//             meshes: (),
+//             materials: (),
+//         })
+//     }
+// }
 
 #[derive(Debug)]
 pub struct Material {
