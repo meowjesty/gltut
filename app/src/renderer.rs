@@ -174,6 +174,29 @@ pub struct Renderer {
     /// it here in wgpu-land (doesn't exist), we just need to specify `wgpu::BufferUsage::COPY_DST`.
     staging_belt: wgpu::util::StagingBelt,
     size: dpi::PhysicalSize<u32>,
+    /// NOTE(alex): If you think of the vertex buffer as having 1 object (in our bunch of squares
+    /// to form a cube example, squares come together to form 1 object, the cube), then instancing
+    /// is the creation of instances of this object. This is why transformations being in the
+    /// instance buffer makes sense, these transformations are supposed to happen for specific
+    /// objects (instances of objects).
+    ///
+    /// The workflow goes like this:
+    /// 1. have an object (mesh with vertices, normals, texture coordinates);
+    /// 2. put this object in a vertex buffer;
+    /// 3. decide how many instances of this object you want;
+    /// 4. have transformations for each instance (instance 1 color is red, 2 is blue, move-x 3);
+    /// 5. put these transformations in an instance buffer;
+    /// 6. draw instanced, with the desired instances.
+    ///
+    /// Keep in mind that, even though the vertex buffer (and the shader vectors, matrices) will be
+    /// the same for each instance of an object, the instance buffer may contain whatever
+    /// transformations are neccessary to do what you want. It may contain arbitrary data to, for
+    /// example, indetify an instance (`instance_id` field) of an object. This would allow us to
+    /// change selected instances by other fields than some index in an array.
+    ///
+    /// Thinking ahead, we could have a `HashMap<String, Instance>` of instances and have an object
+    /// be rendered as "Aunt May", and another be "Mary Jane", sharing the vertex buffer object
+    /// (a woman's body), but having a hair color transformation.
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
     depth_texture: Texture,
@@ -701,6 +724,8 @@ impl Renderer {
         // NOTE(alex): Moving a model around can be done in many ways:
         // - uniform buffer objects (not a good solution);
         // - instance buffer objects;
+        // TODO(alex): Take a look in renderdoc to see how this instance buffer is handled in the
+        // shaders.
         self.instances.get_mut(0).unwrap().position.x += world.offset.x;
         self.instances.get_mut(0).unwrap().position.y += world.offset.x;
         self.instances.get_mut(5).unwrap().position.x += world.offset.x;
