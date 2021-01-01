@@ -7,7 +7,7 @@ layout(location = 3) in mat4 model_matrix;
 // layout(location = 7) in vec3 normal;
 
 
-// layout(location = 0) out vec4 out_color;
+layout(location = 0) out vec4 out_color;
 // layout(location = 1) out vec2 out_texture_coordinates;
 layout(location = 2) out vec2 out_offset;
 
@@ -59,4 +59,5 @@ void main() {
     // out_texture_coordinates = texture_coordinates;
     // out_offset = offset;
     out_offset = vec2(0.0, 0.0);
+    out_color = vec4(model_matrix[0][1], model_matrix[1][2], model_matrix[2][2], 1.0);
 }

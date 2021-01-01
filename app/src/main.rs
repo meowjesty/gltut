@@ -24,7 +24,7 @@ pub(crate) mod world;
 
 use camera::{Camera, Projection};
 use renderer::Uniforms;
-use vertex::{cube, Vertex};
+use vertex::cube;
 
 pub struct StagingBuffer {
     buffer: wgpu::Buffer,
@@ -184,7 +184,7 @@ impl CameraController {
     }
 }
 
-fn handle_input(event: &DeviceEvent, world: &mut World, delta_time: f32) {
+fn handle_input(event: &DeviceEvent, world: &mut World) {
     match event {
         DeviceEvent::Key(KeyboardInput {
             virtual_keycode: Some(key),
@@ -199,7 +199,7 @@ fn handle_input(event: &DeviceEvent, world: &mut World, delta_time: f32) {
         DeviceEvent::MouseWheel { delta } => {
             world.camera_controller.process_scroll(delta);
         }
-        DeviceEvent::Motion { axis, value } => {}
+        DeviceEvent::Motion { .. } => {}
         DeviceEvent::Button { button, state } => {
             if *button == 1 && *state == ElementState::Pressed {
                 world.camera_controller.mouse_pressed = true;
@@ -207,14 +207,14 @@ fn handle_input(event: &DeviceEvent, world: &mut World, delta_time: f32) {
                 world.camera_controller.mouse_pressed = false;
             }
         }
-        DeviceEvent::Text { codepoint } => {}
+        DeviceEvent::Text { .. } => {}
         _ => (),
     }
 }
 
-fn debug_glb() {
+fn _debug_glb() {
     let path = path::Path::new("./assets/kitten.gltf");
-    let (document, buffers, images) = gltf::import(path).expect("Could not open gltf file.");
+    let (document, buffers, _images) = gltf::import(path).expect("Could not open gltf file.");
 
     // TODO(alex): This is the loop format I was talking about above.
     // let mut positions: Vec<glam::Vec3> = Vec::with_capacity(32 * 1024);
@@ -241,13 +241,13 @@ fn debug_glb() {
             // into the `buffers` of the binary document.
             // We should use it in the `&buffers.get(0)`. qr
             let position_view = position_accessor.view().unwrap();
-            let position_buffer = position_view.buffer();
+            let _position_buffer = position_view.buffer();
             info!("Buffers len {:?}", buffers.len());
             let positions = &buffers.get(0).unwrap()
                 [position_view.offset()..position_view.offset() + position_view.length()];
             let indices_accessor = primitive.indices().unwrap();
             let indices_view = indices_accessor.view().unwrap();
-            let indices_buffer = indices_view.buffer();
+            let _indices_buffer = indices_view.buffer();
             let indices = &buffers.get(0).unwrap()
                 [indices_view.offset()..indices_view.offset() + indices_view.length()];
             info!("position {:?} indices {:?}", positions.len(), indices.len());
@@ -281,7 +281,7 @@ fn debug_gltf_json<'x>() -> (&'x [u8], (&'x [u8], u32)) {
 
             for (semantic, accessor) in primitive.attributes {
                 if let Some(accessor) = root.accessors.get(accessor.value()) {
-                    let view_index = accessor.buffer_view.unwrap().value();
+                    // let view_index = accessor.buffer_view.unwrap().value();
                     let offset = accessor.byte_offset as usize;
                     let count = accessor.count as usize;
                     /*
@@ -302,7 +302,7 @@ fn debug_gltf_json<'x>() -> (&'x [u8], (&'x [u8], u32)) {
                         _ => core::mem::size_of::<u32>(),
                     };
                     let length = count * size_bytes;
-                    let view = root.buffer_views.get(view_index).unwrap();
+                    // let view = root.buffer_views.get(view_index).unwrap();
                     let buffer = &binary[offset..offset + length];
 
                     match semantic.unwrap() {
@@ -450,7 +450,7 @@ fn main() {
         match event {
             Event::DeviceEvent { ref event, .. } => {
                 if has_focus {
-                    handle_input(event, &mut world, step_timer.render_delta() as f32);
+                    handle_input(event, &mut world);
                 }
             }
             Event::WindowEvent { event, .. } => match event {
@@ -482,10 +482,6 @@ fn main() {
                     let (x_offset, y_offset) =
                         compute_position_offsets(timer.elapsed().as_secs_f32());
                     world.offset = glam::Vec2::new(x_offset, y_offset);
-                    for mut vertex in world.debug_vertices.iter_mut() {
-                        // vertex.position.x += x_offset;
-                        // vertex.position.y += y_offset;
-                    }
                 }
                 world
                     .camera_controller

@@ -1,6 +1,6 @@
 #version 460
 
-// layout(location = 0) in vec4 color;
+layout(location = 0) in vec4 color;
 // layout(location = 1) in vec2 texture_coordinates;
 layout(location = 2) in vec2 offset;
 
@@ -56,5 +56,5 @@ void main() {
     // NOTE(alex): Moving a model around can be done in many ways:
     // - uniform buffer objects (not a good solution);
     // - instance buffer objects;
-    out_color = vec4(1.0, 0.2, 0.5, 1.0);
+    out_color = color;
 }

@@ -1,13 +1,6 @@
-#![feature(const_fn)]
-#![feature(const_trait_impl)]
-
 use core::mem::*;
-use std::{io, path};
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
-
-use crate::texture::Texture;
 
 #[repr(C)]
 #[derive(Copy, Clone, Default, Debug, PartialEq, Pod, Zeroable)]
@@ -327,6 +320,7 @@ pub(crate) fn cube(
     (back, back_indices)
 }
 
+/*
 #[derive(Debug)]
 pub struct Mesh {
     name: String,
@@ -429,12 +423,13 @@ impl Mesh {
         // }
     }
 }
+*/
 
-#[derive(Debug)]
-pub struct Model {
-    pub meshes: Vec<Mesh>,
-    pub materials: Vec<Material>,
-}
+// #[derive(Debug)]
+// pub struct Model {
+//     pub meshes: Vec<Mesh>,
+//     pub materials: Vec<Material>,
+// }
 
 // impl Model {
 //     pub fn load<P: AsRef<path::Path>>(
@@ -471,11 +466,11 @@ pub struct Model {
 //     }
 // }
 
-#[derive(Debug)]
-pub struct Material {
-    pub name: String,
-    pub texture: Texture,
-}
+// #[derive(Debug)]
+// pub struct Material {
+//     pub name: String,
+//     pub texture: Texture,
+// }
 
 /*
 vertices: vec![

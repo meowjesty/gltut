@@ -1,25 +1,20 @@
-use std::{
-    io, iter,
-    num::{NonZeroU32, NonZeroU8},
-    path,
-};
+use std::iter;
 
 use bytemuck::{Pod, Zeroable};
 use futures::{task, task::LocalSpawnExt};
 use glam::swizzles::*;
-use image::{imageops::index_colors, GenericImageView};
+use gltf::Buffer;
 use log::info;
-use wgpu::{util::DeviceExt, BindGroupLayoutEntry, SwapChainDescriptor, TextureAspect};
-use wgpu_glyph::{ab_glyph, GlyphBrushBuilder};
+use wgpu::{util::DeviceExt, BindGroupLayoutEntry};
+use wgpu_glyph::ab_glyph;
 use winit::{dpi, window};
 
 use crate::{
     camera::{Camera, Projection},
     debug_gltf_json,
     texture::Texture,
-    vertex::{DebugVertex, Vertex},
+    vertex::Vertex,
     world::World,
-    CameraController,
 };
 
 #[repr(C)]

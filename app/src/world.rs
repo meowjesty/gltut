@@ -1,7 +1,7 @@
 use crate::{
     camera::{Camera, Projection},
     renderer::Uniforms,
-    vertex::{DebugVertex, Vertex},
+    vertex::DebugVertex,
     CameraController,
 };
 
