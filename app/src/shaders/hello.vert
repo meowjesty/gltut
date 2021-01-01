@@ -1,13 +1,15 @@
 #version 460
 
 layout(location = 0) in vec3 position;
-// layout(location = 1) in vec3 color;
+layout(location = 10) in vec2 offset;
 // layout(location = 2) in vec2 texture_coordinates;
 layout(location = 3) in mat4 model_matrix;
 // layout(location = 7) in vec3 normal;
 
+
 // layout(location = 0) out vec4 out_color;
 // layout(location = 1) out vec2 out_texture_coordinates;
+layout(location = 2) out vec2 out_offset;
 
 layout(set = 0, binding = 0)
 uniform Uniforms {
@@ -33,10 +35,28 @@ buffer Vertices {
 */
 
 void main() {
+    // TODO(alex): It doesn't moves the model, it's moving a weird line in circles.
+    // vec4 offsetter = vec4(0.0);
+    // if (offset.x > 0.0) {
+    //     offsetter.x += 0.5;
+    // } else if (offset.x < 0.0) {
+    //     offsetter.x -= 0.5;
+    // }
+
+    // if (offset.y > 0.0) {
+    //     offsetter.y += 0.5;
+    // } else if (offset.y < 0.0) {
+    //     offsetter.y -= 0.5;
+    // }
+
+    // vec4 offset_position = vec4(position.x + offsetter.x, position.y + offsetter.y, position.z, 1.0);
+    // vec4 position_with_camera = view_projection * model_matrix * offset_position;
     vec4 position_with_camera = view_projection * model_matrix * vec4(position, 1.0);
     // vec4 position_with_camera = view_projection * vec4(position, 1.0);
 
     gl_Position = position_with_camera;
     // out_color = vec4(color, 1.0);
     // out_texture_coordinates = texture_coordinates;
+    // out_offset = offset;
+    out_offset = vec2(0.0, 0.0);
 }

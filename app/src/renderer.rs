@@ -13,7 +13,14 @@ use wgpu::{util::DeviceExt, BindGroupLayoutEntry, SwapChainDescriptor, TextureAs
 use wgpu_glyph::{ab_glyph, GlyphBrushBuilder};
 use winit::{dpi, window};
 
-use crate::{debug_gltf_json, vertex::Vertex, CameraController};
+use crate::{
+    camera::{Camera, Projection},
+    debug_gltf_json,
+    texture::Texture,
+    vertex::{DebugVertex, Vertex},
+    world::World,
+    CameraController,
+};
 
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone, Pod, Zeroable)]
@@ -86,323 +93,6 @@ impl Instance {
 
 const NUM_INSTANCES_PER_ROW: u32 = 5;
 
-pub type Radians = f32;
-
-#[derive(Debug, Default)]
-pub struct Camera {
-    // pub eye: glam::Vec3,
-    // target: glam::Vec3,
-    // up: glam::Vec3,
-    // aspect_ratio: f32,
-    // fov_y: f32,
-    // z_near: f32,
-    // z_far: f32,
-    /// X-axis moves the thumb towards the scren +;
-    /// Y-axis moves the index towards the screen +;
-    /// Z-axis moves the hand towards your nose +;
-    pub position: glam::Vec3,
-    pub yaw: Radians,
-    pub pitch: Radians,
-}
-
-// TODO(alex): Is this correct for right-handed coordinates?
-pub fn look_at_dir(eye: glam::Vec3, dir: glam::Vec3, up: glam::Vec3) -> glam::Mat4 {
-    // NOTE(alex): Normalizing a vector that is already at length 1.0 changes nothing.
-    let f = dir.normalize();
-    let s = f.cross(up).normalize();
-    let u = s.cross(f);
-
-    #[cfg_attr(rustfmt, rustfmt_skip)]
-        glam::Mat4::from_cols_array_2d(&[
-            [s.x.clone(), u.x.clone(), -f.x.clone(), 0.0],
-            [s.y.clone(), u.y.clone(), -f.y.clone(), 0.0],
-            [s.z.clone(), u.z.clone(), -f.z.clone(), 0.0],
-            [-eye.dot(s), -eye.dot(u), eye.dot(f), 1.0],
-        ])
-}
-
-impl Camera {
-    pub fn view_matrix(&self) -> glam::Mat4 {
-        // NOTE(alex): glam doesn't have a public version of look at direction
-        // (`cgmath::loot_at_dir), that's why it was rotating around the center point, as this
-        // `glam::look_at_rh` looks at the center (locks the center, not a direction).
-        // TODO(alex): Is there a way to use `let view_matrix = glam::Mat4::look_at_rh(` correctly
-        // by using look_at_rh formula with the correct center (check the math)?
-        // TODO(alex): We don't need the `OPENGL_TO_WGPU_MATRIX`, things still look okay so far
-        // without it.
-        let view_matrix = look_at_dir(
-            self.position,
-            glam::Vec3::new(self.yaw.cos(), self.pitch.sin(), self.yaw.sin()).normalize(),
-            glam::Vec3::unit_y(),
-        );
-
-        view_matrix
-    }
-
-    // pub fn view_projection_matrix(&self) -> glam::Mat4 {
-    //     let view = glam::Mat4::look_at_rh(self.eye, self.target, self.up);
-    //     let projection = glam::Mat4::perspective_rh(
-    //         self.fov_y.to_radians(),
-    //         self.aspect_ratio,
-    //         self.z_near,
-    //         self.z_far,
-    //     );
-
-    //     projection * view
-    // }
-}
-
-// #[rustfmt::skip]
-// pub const OPENGL_TO_WGPU_MATRIX: glam::Mat4 = glam::const_mat4!([
-//     1.0, 0.0, 0.0, 0.0,
-//     0.0, 1.0, 0.0, 0.0,
-//     0.0, 0.0, 0.5, 0.0,
-//     0.0, 0.0, 0.5, 1.0,
-// ]);
-
-#[derive(Debug, Default)]
-pub struct Projection {
-    pub aspect_ratio: f32,
-    pub fov_y: f32,
-    pub z_near: f32,
-    pub z_far: f32,
-}
-
-#[rustfmt::skip]
-pub const OPENGL_TO_WGPU_MATRIX: glam::Mat4 = glam::const_mat4!([
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 0.5, 0.0,
-    0.0, 0.0, 0.5, 1.0,
-]);
-impl Projection {
-    pub fn resize(&mut self, width: u32, height: u32) {
-        self.aspect_ratio = width as f32 / height as f32;
-    }
-
-    pub fn perspective(&self) -> glam::Mat4 {
-        let perspective =
-            glam::Mat4::perspective_rh(self.fov_y, self.aspect_ratio, self.z_near, self.z_far);
-
-        perspective
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct World {
-    pub vertices: Vec<Vertex>,
-    pub(crate) indices: Vec<u32>,
-    pub(crate) camera_controller: CameraController,
-    pub(crate) camera: Camera,
-    pub(crate) projection: Projection,
-    pub(crate) uniforms: Uniforms,
-}
-
-#[derive(Debug)]
-pub struct Texture {
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
-    sampler: wgpu::Sampler,
-}
-
-impl Texture {
-    pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-
-    /// NOTE(alex): Special kind of texture that is used for depth testing (**Depth Buffer**).
-    ///
-    /// This texture will be created as a render output (`OUTPUT_ATTACHMENT`, similar to how a
-    /// `SwapChain` is a render target).
-    ///
-    /// Just relying on Z-axis ordering doesn't work very well in 3D, we're getting weird
-    /// rendering behaviour where some sides disappear, even though they're still half in view.
-    /// Depth testing exists to solve this issue.
-    ///
-    /// The main idea here is to have a black and white texture that stores the _z_-coordinate of
-    /// the rendered pixels, and check (via the pipeline `depth_stencil_state.depth_compare`)
-    /// whether to keep or replace the data.
-    /// No need to sort objects to try and maintain a _z_-ordered set of draw calls.
-    pub fn create_depth_texture(
-        device: &wgpu::Device,
-        swap_chain_descriptor: &wgpu::SwapChainDescriptor,
-    ) -> Texture {
-        // NOTE(alex): Depth texture must be the same size of the screen, again, it kinds comes
-        // back to how similar this is to the swap chain image idea.
-        let size = wgpu::Extent3d {
-            width: swap_chain_descriptor.width,
-            height: swap_chain_descriptor.height,
-            depth: 1,
-        };
-
-        let descriptor = &wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: Self::DEPTH_FORMAT,
-            // NOTE(alex): `TextureUsage::OUTPUT_ATTACHMENT` is the same as we have in the
-            // `SwapChainDescriptor`, as this usage means we're rendering to this texture.
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::SAMPLED,
-        };
-        let texture = device.create_texture(&descriptor);
-
-        let view_descriptor = wgpu::TextureViewDescriptor {
-            label: Some("Depth Texture view"),
-            format: Some(Self::DEPTH_FORMAT),
-            dimension: Some(wgpu::TextureViewDimension::D2),
-            aspect: TextureAspect::All,
-            base_mip_level: 0,
-            level_count: NonZeroU32::new(1),
-            base_array_layer: 0,
-            array_layer_count: NonZeroU32::new(1),
-        };
-        let view = texture.create_view(&view_descriptor);
-
-        let sampler_descriptor = wgpu::SamplerDescriptor {
-            label: Some("Depth Texture sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            lod_min_clamp: -100.0,
-            lod_max_clamp: 100.0,
-            // NOTE(alex): This is not the actual depth testing compare function!
-            compare: Some(wgpu::CompareFunction::LessEqual),
-            // TODO(alex): Is there an equivalent to vulkan's
-            // `VkPhysicalDeviceProperties.limits.maxSamplerAnisotropy`?
-            anisotropy_clamp: NonZeroU8::new(16),
-        };
-        let sampler = device.create_sampler(&sampler_descriptor);
-
-        Self {
-            texture,
-            view,
-            sampler,
-        }
-    }
-
-    pub fn load<P: AsRef<path::Path>>(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        path: P,
-    ) -> Result<Self, String> {
-        let path_copy = path.as_ref().to_path_buf();
-        let label = path_copy.to_str();
-
-        let image = image::open(path).map_err(|err| err.to_string())?;
-        Self::from_image(device, queue, &image)
-    }
-
-    pub fn from_bytes(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        bytes: &[u8],
-    ) -> Result<Texture, String> {
-        let image = image::load_from_memory(bytes).map_err(|err| err.to_string())?;
-        Self::from_image(device, queue, &image)
-    }
-
-    pub fn from_image(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        image: &image::DynamicImage,
-    ) -> Result<Texture, String> {
-        let rgba = image.to_rgba8();
-        let dimensions = image.dimensions();
-        let size = wgpu::Extent3d {
-            width: dimensions.0,
-            height: dimensions.1,
-            depth: 1,
-        };
-        // NOTE(alex): This is somewhat equivalent to the vulkan `VkImage`, the main difference is
-        // that memory handling is easier in wgpu.
-        // NOTE(alex): 1D images can be used to store an array of data or gradient, 2D are mainly
-        // used for textures (here), while 3D images can be used to store voxel volumes.
-        // NOTE(alex): You could use the shader to access the buffer of pixels directly, but
-        // it isn't optimal.
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Texture"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            // TODO(alex): zeux said that this is the modern format that should be used, why?
-            // format: wgpu::TextureFormat::Depth32Float,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            // NOTE(alex): `TextureUsage::SAMPLED` means optimal for shader, while
-            // `TextureUsage::COPY_DST` is optimal as the destination in a transfer op (copy to).
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
-        });
-        // NOTE(alex): We only have to write this image to a buffer once (if we're not changing the
-        // image), so copying the data during the renderer initialization is fine.
-        // There is a legacy way of doing it, that involves copying it as a buffer, and doing the
-        // `encoder`, `staging_belt` dance (this is how vulkan works with its staging buffers).
-        // Notice that we can treat the texture as a buffer of bytes here, and later think about
-        // how we want to apply modifications to it. The `TextureView` is how the data will be
-        // actually used, so before we just need to specify what kind of bytes we have, how are
-        // they formatted, size, and usage.
-        // Later the `TextureView` will be created based on the `Texture`, but it doesn't really
-        // care about buffer stuff.
-        // And the `Sampler`s are even more independent, as they have no connection to neither
-        // `Texture` or `TextureView`.
-        queue.write_texture(
-            wgpu::TextureCopyView {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            &rgba,
-            wgpu::TextureDataLayout {
-                offset: 0,
-                bytes_per_row: 4 * size.width,
-                rows_per_image: size.height,
-            },
-            size,
-        );
-        // NOTE(alex): Images are accessed by views rather than directly.
-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("Texture view"),
-            format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
-            dimension: Some(wgpu::TextureViewDimension::D2),
-            aspect: TextureAspect::All,
-            base_mip_level: 0,
-            level_count: NonZeroU32::new(1),
-            base_array_layer: 0,
-            array_layer_count: NonZeroU32::new(1),
-        });
-        // NOTE(alex): How the texture (the texels) will be mapped into geometry, what kind of
-        // filters should it apply.
-        // The sampler is independent of the image (texture), it's a descriptor that can be used
-        // for any image we want and it will apply these properties (filters) to it. It's an
-        // interface to extract colors from a texture.
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Texture sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            lod_min_clamp: 0.0,
-            lod_max_clamp: std::f32::MAX,
-            // NOTE(alex): Texels will be compared to a value, and then the result will be used in
-            // filtering operations (useful for shadow maps).
-            compare: None,
-            // TODO(alex): Is there an equivalent to vulkan's
-            // `VkPhysicalDeviceProperties.limits.maxSamplerAnisotropy`?
-            anisotropy_clamp: NonZeroU8::new(16),
-        });
-
-        Ok(Self {
-            texture,
-            view,
-            sampler,
-        })
-    }
-}
-
 /// TODO(alex): There needs to be a separation between things here and an actual `Pipeline`.
 /// As it stands, `Renderer::new()` will create a pipeline with very specific details, that
 /// can't be easily changed (I could set them in the `renderer` instance, but not a good solution),
@@ -449,6 +139,9 @@ pub struct Renderer {
     /// relation to the bind groups), you can still modify uniforms by writing to the buffer like
     /// we're doing here with the `staging_belt.copy_from_slice`.
     uniform_buffer: wgpu::Buffer,
+    /// NOTE(alex): Trying to figure out how to move vertices without changing the model buffer,
+    /// basically change them in the shader, instead of CPU.
+    offset_buffer: wgpu::Buffer,
     /// NOTE(alex): wgpu recommends putting binding groups accordingly to usage, so bindings that
     // are run per-frame (change the least) be bind group 0, per-pass bind group 1, and
     /// per-material bind group 2.
@@ -485,6 +178,7 @@ pub struct Renderer {
     instance_buffer: wgpu::Buffer,
     depth_texture: Texture,
     num_indices: usize,
+    positions: Vec<u8>,
 }
 
 impl Renderer {
@@ -777,71 +471,26 @@ impl Renderer {
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance buffer"),
             contents: bytemuck::cast_slice(&instance_data),
-            usage: wgpu::BufferUsage::VERTEX,
+            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+        });
+
+        let offset_descriptor = wgpu::VertexBufferDescriptor {
+            stride: core::mem::size_of::<glam::Vec2>() as wgpu::BufferAddress,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &[wgpu::VertexAttributeDescriptor {
+                offset: 0,
+                format: wgpu::VertexFormat::Float2,
+                shader_location: 10,
+            }],
+        };
+        let offset_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Offset x y buffer"),
+            contents: bytemuck::cast_slice(&[world.offset]),
+            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
         });
 
         let staging_belt = wgpu::util::StagingBelt::new(1024);
 
-        /*
-        let path = path::Path::new("./assets/kitten.gltf");
-        let (document, buffers, images) = gltf::import(path).expect("Could not open gltf file.");
-        let mut positions = None;
-        let mut normals = None;
-        let mut indices = None;
-        for mesh in document.meshes() {
-            for primitive in mesh.primitives() {
-                if let Some(accessor) = primitive.indices() {
-                    let view = accessor.view().unwrap();
-                    let index = view.buffer().index();
-                    let offset = view.offset();
-                    let length = view.length();
-                    indices = Some(&buffers.get(index).unwrap()[offset..offset + length]);
-
-                    println!(
-                        "primitive: offset {:?} length {:?} index {:?}",
-                        offset, length, index
-                    );
-                }
-
-                for (semantic, accessor) in primitive.attributes() {
-                    let view = accessor.view().unwrap();
-                    let offset = view.offset();
-                    let length = view.length();
-                    // let stride = view.stride().unwrap_or(1);
-                    let buffer_view = view.buffer();
-                    let index = buffer_view.index();
-                    let buffer = &buffers.get(index).unwrap()[offset..offset + length];
-
-                    let offset = accessor.offset() * accessor.data_type().size();
-                    let length = accessor.count() * accessor.data_type().size();
-
-                    /*
-                    semantic: offset 0 length 59424 index 0
-                    semantic: offset 713088 length 59424 index 0
-                                        */
-
-                    println!(
-                        "semantic {:?}: offset {:?} length {:?} index {:?}",
-                        semantic, offset, length, index
-                    );
-
-                    match semantic {
-                        gltf::Semantic::Positions => {
-                            positions = Some(&buffer[offset..offset + length]);
-                        }
-                        gltf::Semantic::Normals => {
-                            normals = Some(&buffer[offset..offset + length]);
-                        }
-                        gltf::Semantic::Tangents => {}
-                        gltf::Semantic::Colors(_) => {}
-                        gltf::Semantic::TexCoords(_) => {}
-                        gltf::Semantic::Joints(_) => {}
-                        gltf::Semantic::Weights(_) => {}
-                    }
-                }
-            }
-        }
-        */
         // TODO(alex): Try out the higher level API, now that I have a better understanding of the
         // glTF formats, and we know the renderer is working.
         let (positions, (indices, indices_count)) = debug_gltf_json();
@@ -896,7 +545,7 @@ impl Renderer {
             hello_vs,
             hello_fs,
             &[&uniform_bind_group_layout, &texture_bind_group_layout],
-            &[Vertex::DESCRIPTOR, Instance::DESCRIPTOR],
+            &[Vertex::DESCRIPTOR, Instance::DESCRIPTOR, offset_descriptor],
         );
 
         let render_pipelines = vec![hello_render_pipeline];
@@ -917,6 +566,7 @@ impl Renderer {
             vertex_buffers: vec![vertex_buffer],
             index_buffers: vec![index_buffer],
             uniform_buffer,
+            offset_buffer,
             bind_groups: vec![uniform_bind_group, texture_bind_group],
             // glyph_brush,
             staging_belt,
@@ -924,6 +574,7 @@ impl Renderer {
             instances,
             instance_buffer,
             depth_texture,
+            positions: positions.to_vec(),
             // NOTE(alex): When dealing with buffers directly, we want to pass the number of index
             // elements, not the length of the buffer itself.
             num_indices: indices_count as usize,
@@ -1012,6 +663,71 @@ impl Renderer {
             )
             .copy_from_slice(bytemuck::bytes_of(&world.uniforms));
 
+        // TODO(alex): Research how to change vertices values in GPU.
+        // self.staging_belt
+        //     .write_buffer(
+        //         &mut encoder,
+        //         &self.offset_buffer,
+        //         0,
+        //         wgpu::BufferSize::new(core::mem::size_of::<glam::Vec2>() as u64).unwrap(),
+        //         &self.device,
+        //     )
+        //     .copy_from_slice(bytemuck::bytes_of(&[world.offset]));
+
+        // TODO(alex): This gives an error:
+        // "copy would end up overruning the bounds of one of the buffers or textures"
+        // let model_size = Vertex::SIZE * self.positions.len() as u64;
+        // TODO(alex): This doesn't make the kitten move either.
+        // let model_size = self.positions.len() as u64;
+        // self.staging_belt
+        //     .write_buffer(
+        //         &mut encoder,
+        //         &self.vertex_buffers.get(0).unwrap(),
+        //         0,
+        //         wgpu::BufferSize::new(model_size).unwrap(),
+        //         &self.device,
+        //     )
+        //     .copy_from_slice(&self.positions);
+
+        let mut debug_count = 0;
+        // for instance in self.instances.iter_mut() {
+        //     instance.position.x += world.offset.x;
+        //     instance.position.y += world.offset.y;
+        //     if debug_count > 3 {
+        //         break;
+        //     }
+        //     debug_count += 1;
+        // }
+        // NOTE(alex): Moving a model around can be done in many ways:
+        // - uniform buffer objects (not a good solution);
+        // - instance buffer objects;
+        self.instances.get_mut(0).unwrap().position.x += world.offset.x;
+        self.instances.get_mut(0).unwrap().position.y += world.offset.x;
+        self.instances.get_mut(5).unwrap().position.x += world.offset.x;
+        self.instances.get_mut(5).unwrap().position.y += world.offset.x;
+        self.instances.get_mut(10).unwrap().position.x += world.offset.x;
+        self.instances.get_mut(10).unwrap().position.y += world.offset.x;
+        self.instances.get_mut(16).unwrap().position.x += world.offset.x;
+        self.instances.get_mut(16).unwrap().position.y += world.offset.x;
+        self.instances.get_mut(22).unwrap().position.x += world.offset.x;
+        self.instances.get_mut(22).unwrap().position.y += world.offset.x;
+        self.instances.get_mut(24).unwrap().position.x += world.offset.x;
+        self.instances.get_mut(24).unwrap().position.y += world.offset.x;
+        let instance_data = self
+            .instances
+            .iter()
+            .map(Instance::model_matrix)
+            .collect::<Vec<_>>();
+        self.staging_belt
+            .write_buffer(
+                &mut encoder,
+                &self.instance_buffer,
+                0,
+                wgpu::BufferSize::new(Instance::SIZE * instance_data.len() as u64).unwrap(),
+                &self.device,
+            )
+            .copy_from_slice(bytemuck::cast_slice(&instance_data));
+
         let _render_result = self
             .swap_chain
             .get_current_frame()
@@ -1052,6 +768,8 @@ impl Renderer {
                         });
 
                     first_render_pass.set_pipeline(&self.render_pipelines.first().unwrap());
+
+                    // NOTE(alex): 3D Model index buffer.
                     first_render_pass
                         .set_index_buffer(self.index_buffers.first().unwrap().slice(..));
 
@@ -1064,12 +782,12 @@ impl Renderer {
                         first_render_pass.set_bind_group(i as u32, bind_group, &[]);
                     }
 
-                    for (i, vertex_buffer) in self.vertex_buffers.iter().enumerate() {
-                        first_render_pass.set_vertex_buffer(i as u32, vertex_buffer.slice(..));
-                        assert!(i < 1);
-                    }
+                    // NOTE(alex): 3D Model vertex buffer (and related).
+                    first_render_pass
+                        .set_vertex_buffer(0, self.vertex_buffers.get(0).unwrap().slice(..));
 
                     first_render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+                    first_render_pass.set_vertex_buffer(2, self.offset_buffer.slice(..));
 
                     // NOTE(alex): wgpu API takes advantage of ranges to specify the offset
                     // into the vertex buffer. `0..len()` means that the `gl_VertexIndex`
@@ -1089,17 +807,6 @@ impl Renderer {
                         0..self.instances.len() as _,
                     );
                 }
-
-                // self.glyph_brush
-                //     .draw_queued(
-                //         &self.device,
-                //         &mut self.staging_belt,
-                //         &mut encoder,
-                //         &frame.output.view,
-                //         self.swap_chain_descriptor.width,
-                //         self.swap_chain_descriptor.height,
-                //     )
-                //     .unwrap();
 
                 self.staging_belt.finish();
 

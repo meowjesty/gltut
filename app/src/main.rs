@@ -1,12 +1,11 @@
+use log::info;
 use std::{
     f32::consts::{FRAC_PI_2, PI},
     path,
     time::Instant,
 };
+use world::World;
 
-use log::info;
-use renderer::{Camera, Projection, Uniforms, World};
-use vertex::{cube, Vertex};
 use wgpu::util::DeviceExt;
 use winit::{
     dpi,
@@ -17,8 +16,15 @@ use winit::{
     event_loop, window,
 };
 
-mod renderer;
-mod vertex;
+pub(crate) mod camera;
+pub(crate) mod renderer;
+pub(crate) mod texture;
+pub(crate) mod vertex;
+pub(crate) mod world;
+
+use camera::{Camera, Projection};
+use renderer::Uniforms;
+use vertex::{cube, Vertex};
 
 pub struct StagingBuffer {
     buffer: wgpu::Buffer,
@@ -387,9 +393,9 @@ fn main() {
     }
     */
 
-    let (vertices, indices) = cube(
+    let (debug_vertices, indices) = cube(
         glam::Vec3::new(0.0, 0.0, 0.0),
-        2.0,
+        5.0,
         0,
         glam::Vec3::new(0.0, 1.0, 1.0),
     );
@@ -397,11 +403,11 @@ fn main() {
     let mut world = World {
         // NOTE(alex): Position is done in counter-clockwise fashion, starting from the middle point
         // in this case.
-        vertices,
+        debug_vertices,
         // NOTE(alex): These indices will work from:
         // middle->left->right (implicit back to middle);
         // middle->right->up left (implicit back to middle);
-        indices,
+        debug_indices: indices,
         camera: Camera {
             // eye: (0.0, 1.0, 2.0).into(),
             // target: (0.0, 0.0, 0.0).into(),
@@ -430,10 +436,12 @@ fn main() {
         // TODO(alex): Mouse is moving too fast, maybe something wrong with the math?
         camera_controller: CameraController::new(1.0, 0.2),
         uniforms: Uniforms::default(),
+        offset: glam::const_vec2!([1.0, 1.0]),
     };
 
     let mut renderer = futures::executor::block_on(renderer::Renderer::new(&window, &mut world));
     let mut step_timer = fixedstep::FixedStep::start(30.0).limit(5);
+    let mut has_focus = false;
     window.request_redraw();
 
     event_loop.run(move |event, _target_window, control_flow| {
@@ -441,7 +449,9 @@ fn main() {
 
         match event {
             Event::DeviceEvent { ref event, .. } => {
-                handle_input(event, &mut world, step_timer.render_delta() as f32);
+                if has_focus {
+                    handle_input(event, &mut world, step_timer.render_delta() as f32);
+                }
             }
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::Resized(new_size) => {
@@ -461,6 +471,9 @@ fn main() {
                     }
                     _ => (),
                 },
+                WindowEvent::Focused(focused) => {
+                    has_focus = focused;
+                }
                 _ => (),
             },
             Event::MainEventsCleared => {
@@ -468,7 +481,8 @@ fn main() {
                 while step_timer.update() {
                     let (x_offset, y_offset) =
                         compute_position_offsets(timer.elapsed().as_secs_f32());
-                    for mut vertex in world.vertices.iter_mut() {
+                    world.offset = glam::Vec2::new(x_offset, y_offset);
+                    for mut vertex in world.debug_vertices.iter_mut() {
                         // vertex.position.x += x_offset;
                         // vertex.position.y += y_offset;
                     }

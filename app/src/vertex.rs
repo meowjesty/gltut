@@ -1,12 +1,13 @@
 #![feature(const_fn)]
 #![feature(const_trait_impl)]
+
 use core::mem::*;
 use std::{io, path};
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
-use crate::renderer::Texture;
+use crate::texture::Texture;
 
 #[repr(C)]
 #[derive(Copy, Clone, Default, Debug, PartialEq, Pod, Zeroable)]
@@ -33,41 +34,22 @@ impl Vertex {
         stride: Self::SIZE,
         step_mode: wgpu::InputStepMode::Vertex,
         // attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3],
-        attributes: &[wgpu::VertexAttributeDescriptor {
-            offset: 0,
-            shader_location: 0,
-            format: wgpu::VertexFormat::Float3,
-        }],
+        attributes: &[
+            wgpu::VertexAttributeDescriptor {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float3,
+            },
+            // NOTE(alex): This is not the way to change the data contained in this buffer, we must
+            // pass changing values (to do the circular movement, for example) in a separate buffer,
+            // like we don for the `model_matrix` in the vertex shader.
+            // wgpu::VertexAttributeDescriptor {
+            //     offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
+            //     shader_location: 1,
+            //     format: wgpu::VertexFormat::Float2,
+            // },
+        ],
     };
-
-    pub const DESCRIPTOR_CUSTOM: wgpu::VertexBufferDescriptor<'static> =
-        wgpu::VertexBufferDescriptor {
-            stride: Self::SIZE,
-            step_mode: wgpu::InputStepMode::Vertex,
-            // attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3],
-            attributes: &[
-                wgpu::VertexAttributeDescriptor {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float3,
-                },
-                wgpu::VertexAttributeDescriptor {
-                    offset: VEC3_SIZE as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float3,
-                },
-                wgpu::VertexAttributeDescriptor {
-                    offset: (VEC3_SIZE * 2) as wgpu::BufferAddress,
-                    shader_location: 2,
-                    format: wgpu::VertexFormat::Float2,
-                },
-                wgpu::VertexAttributeDescriptor {
-                    offset: (VEC3_SIZE * 2 + VEC2_SIZE) as wgpu::BufferAddress,
-                    shader_location: 7,
-                    format: wgpu::VertexFormat::Float2,
-                },
-            ],
-        };
 
     // pub fn descriptor_3d<'x>() -> Box<wgpu::VertexBufferDescriptor<'x>> {
     //     let mut attributes = wgpu::vertex_attr_array![0 => Float3, 1 => Float3];
@@ -87,18 +69,52 @@ impl Vertex {
     // }
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Pod, Zeroable)]
+pub(crate) struct DebugVertex {
+    pub(crate) position: glam::Vec3,
+    pub(crate) color: glam::Vec3,
+    pub(crate) texture_coordinates: glam::Vec2,
+}
+
+impl DebugVertex {
+    pub const SIZE: wgpu::BufferAddress = size_of::<Self>() as wgpu::BufferAddress;
+    pub const DESCRIPTOR: wgpu::VertexBufferDescriptor<'static> = wgpu::VertexBufferDescriptor {
+        stride: Self::SIZE,
+        step_mode: wgpu::InputStepMode::Vertex,
+        attributes: &[
+            wgpu::VertexAttributeDescriptor {
+                offset: 0,
+                // NOTE(alex): This must be less than 32.
+                shader_location: 24,
+                format: wgpu::VertexFormat::Float3,
+            },
+            wgpu::VertexAttributeDescriptor {
+                offset: size_of::<glam::Vec3>() as wgpu::BufferAddress,
+                shader_location: 25,
+                format: wgpu::VertexFormat::Float3,
+            },
+            wgpu::VertexAttributeDescriptor {
+                offset: (size_of::<glam::Vec3>() * 2) as wgpu::BufferAddress,
+                shader_location: 26,
+                format: wgpu::VertexFormat::Float2,
+            },
+        ],
+    };
+}
+
 /// Back -> red
 /// Front -> blue
 /// Left -> red + blue
 /// Right -> green + blue
 /// Top -> black
 /// Bottom -> white
-pub fn cube(
+pub(crate) fn cube(
     origin: glam::Vec3,
     size: f32,
     index: u32,
     color: glam::Vec3,
-) -> (Vec<Vertex>, Vec<u32>) {
+) -> (Vec<DebugVertex>, Vec<u32>) {
     // WARNING(alex): Texture coordinates are Y-inverted!
     // [0,0]------------------[1,0]
     // ----------------------------
@@ -111,29 +127,25 @@ pub fn cube(
     let tex_ru = glam::const_vec2!([1.0, 0.0]);
 
     let mut back = vec![
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
             texture_coordinates: tex_o,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
             texture_coordinates: tex_rd,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
             texture_coordinates: tex_lu,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
             texture_coordinates: tex_ru,
-            normal: Default::default(),
         },
     ];
     let mut back_indices = vec![
@@ -146,29 +158,25 @@ pub fn cube(
     ];
 
     let mut front = vec![
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_o,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_rd,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_lu,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_ru,
-            normal: Default::default(),
         },
     ];
     let mut front_indices = vec![
@@ -181,29 +189,25 @@ pub fn cube(
     ];
 
     let mut left = vec![
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 1.0),
             texture_coordinates: tex_o,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z + size),
             color: glam::Vec3::new(1.0, 0.0, 1.0),
             texture_coordinates: tex_rd,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 1.0),
             texture_coordinates: tex_lu,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z + size),
             color: glam::Vec3::new(1.0, 0.0, 1.0),
             texture_coordinates: tex_ru,
-            normal: Default::default(),
         },
     ];
     let mut left_indices = vec![
@@ -216,29 +220,25 @@ pub fn cube(
     ];
 
     let mut right = vec![
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 0.0, 0.0),
             texture_coordinates: tex_o,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z + size),
             color: glam::Vec3::new(0.0, 1.0, 0.0),
             texture_coordinates: tex_rd,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_lu,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 1.0),
             texture_coordinates: tex_ru,
-            normal: Default::default(),
         },
     ];
     let mut right_indices = vec![
@@ -251,29 +251,25 @@ pub fn cube(
     ];
 
     let mut top = vec![
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 0.0),
             texture_coordinates: tex_o,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z + size),
             color: glam::Vec3::new(0.0, 0.0, 0.0),
             texture_coordinates: tex_rd,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x, origin.y + size, origin.z),
             color: glam::Vec3::new(0.0, 0.0, 0.0),
             texture_coordinates: tex_lu,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x + size, origin.y + size, origin.z),
             color: glam::Vec3::new(0.0, 0.0, 0.0),
             texture_coordinates: tex_ru,
-            normal: Default::default(),
         },
     ];
     let mut top_indices = vec![
@@ -286,29 +282,25 @@ pub fn cube(
     ];
 
     let mut bottom = vec![
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z + size),
             color: glam::Vec3::new(1.0, 1.0, 1.0),
             texture_coordinates: tex_o,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z + size),
             color: glam::Vec3::new(1.0, 1.0, 1.0),
             texture_coordinates: tex_rd,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 1.0, 1.0),
             texture_coordinates: tex_lu,
-            normal: Default::default(),
         },
-        Vertex {
+        DebugVertex {
             position: glam::Vec3::new(origin.x + size, origin.y, origin.z),
             color: glam::Vec3::new(1.0, 1.0, 1.0),
             texture_coordinates: tex_ru,
-            normal: Default::default(),
         },
     ];
     let mut bottom_indices = vec![
