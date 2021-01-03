@@ -11,7 +11,7 @@ use winit::{dpi, window};
 
 use crate::{
     camera::{Camera, Projection},
-    debug_gltf_json,
+    load_model,
     texture::Texture,
     vertex::Vertex,
     world::World,
@@ -511,7 +511,8 @@ impl Renderer {
 
         // TODO(alex): Try out the higher level API, now that I have a better understanding of the
         // glTF formats, and we know the renderer is working.
-        let (positions, (indices, indices_count)) = debug_gltf_json();
+        // let (positions, (indices, indices_count)) = load_model_gltf();
+        let (positions, (indices, indices_count)) = load_model();
 
         // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
         // so it makes sense to handle every kind of possible `VertexBufferDescriptor` during
@@ -534,7 +535,7 @@ impl Renderer {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             // contents: bytemuck::cast_slice(&world.vertices),
-            contents: positions,
+            contents: &positions,
             // NOTE(alex): `usage: COPY_DST` is related to the staging buffers idea. This means that
             // this buffer will be used as the destination for some data.
             // The kind of buffer must also be specified, so you need the `VERTEX` usage here.
@@ -543,7 +544,7 @@ impl Renderer {
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
             // contents: bytemuck::cast_slice(&world.indices),
-            contents: indices,
+            contents: &indices,
             // NOTE(alex): We don't need `COPY_DST` here because this buffer won't be changing
             // value, if we think about these indices as being 1 geometric figure, they'll remain
             // the same, unless you wanted to quickly change it from a rectangle to some other
@@ -681,41 +682,9 @@ impl Renderer {
             )
             .copy_from_slice(bytemuck::bytes_of(&world.uniforms));
 
-        // TODO(alex): Research how to change vertices values in GPU.
-        // self.staging_belt
-        //     .write_buffer(
-        //         &mut encoder,
-        //         &self.offset_buffer,
-        //         0,
-        //         wgpu::BufferSize::new(core::mem::size_of::<glam::Vec2>() as u64).unwrap(),
-        //         &self.device,
-        //     )
-        //     .copy_from_slice(bytemuck::bytes_of(&[world.offset]));
-
         // TODO(alex): This gives an error:
         // "copy would end up overruning the bounds of one of the buffers or textures"
         // let model_size = Vertex::SIZE * self.positions.len() as u64;
-        // TODO(alex): This doesn't make the kitten move either.
-        // let model_size = self.positions.len() as u64;
-        // self.staging_belt
-        //     .write_buffer(
-        //         &mut encoder,
-        //         &self.vertex_buffers.get(0).unwrap(),
-        //         0,
-        //         wgpu::BufferSize::new(model_size).unwrap(),
-        //         &self.device,
-        //     )
-        //     .copy_from_slice(&self.positions);
-
-        let mut debug_count = 0;
-        // for instance in self.instances.iter_mut() {
-        //     instance.position.x += world.offset.x;
-        //     instance.position.y += world.offset.y;
-        //     if debug_count > 3 {
-        //         break;
-        //     }
-        //     debug_count += 1;
-        // }
         // NOTE(alex): Moving a model around can be done in many ways:
         // - uniform buffer objects (not a good solution);
         // - instance buffer objects;

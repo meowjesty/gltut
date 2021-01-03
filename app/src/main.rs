@@ -1,5 +1,6 @@
 use log::info;
 use std::{
+    collections::HashMap,
     f32::consts::{FRAC_PI_2, PI},
     path,
     time::Instant,
@@ -212,14 +213,27 @@ fn handle_input(event: &DeviceEvent, world: &mut World) {
     }
 }
 
-fn _debug_glb() {
+/// NOTE(alex): This is a higher level approach to loading the data, it uses the glTF-crate
+/// iterator API and we get types in rust-analyzer. The other approach of directly reading from the
+/// glTF-json API ends up accomplishing the same things, except that by using `include_bytes`
+/// instead of `gltf::import` we get a `'static` lifetime for our buffers, which allows us to
+/// easily return slices, meanwhile in the iterator API we're loading the buffer locally, meaning
+/// that we can't just return slices into it (can't borrow something allocated inside a
+/// non-static lifetime function).
+///
+/// This function is a bit more complete than the direct json manipulation one, as it loops through
+/// the whole scene looking for data, while the other just goes straight to meshes.
+///
+/// TODO(alex): This issue might be easy to solve, but I don't want to deal with lifetimes
+/// right now, so we're just allocating vectors and returning them. Must revisit this later.
+///
+/// TODO(alex): Now I have to figure out a way to load more complex models.
+pub fn load_model<'x>() -> (Vec<u8>, (Vec<u8>, usize)) {
+    use core::mem::*;
     let path = path::Path::new("./assets/kitten.gltf");
     let (document, buffers, _images) = gltf::import(path).expect("Could not open gltf file.");
 
-    // TODO(alex): This is the loop format I was talking about above.
-    // let mut positions: Vec<glam::Vec3> = Vec::with_capacity(32 * 1024);
-    // let mut indices: Vec<u32> = Vec::with_capacity(32 * 1024);
-    // NOTE(alex): So apparentely there is no need to translate the positions, normals and so on
+    // NOTE(alex): So apparently there is no need to translate the positions, normals and so on
     // into our custom structures, it seems like a waste of effort when glTF already has everything
     // nicely packed into its buffers.
     // To access we index into each buffer by type, grab from offset to length + offset and look
@@ -234,36 +248,81 @@ fn _debug_glb() {
     // Well, thinking about it a bit better, to change position we could just pass the
     // transformation value (vector or matrix) to the shader, and change the vertices there, as
     // the shader will have complete access to each vertex.
-    for mesh in document.meshes() {
-        for primitive in mesh.primitives() {
-            let position_accessor = primitive.get(&gltf::Semantic::Positions).unwrap();
-            // TODO(alex): The buffer view in glTF has a `buffer: 0` that indicates the `index`
-            // into the `buffers` of the binary document.
-            // We should use it in the `&buffers.get(0)`. qr
-            let position_view = position_accessor.view().unwrap();
-            let _position_buffer = position_view.buffer();
-            info!("Buffers len {:?}", buffers.len());
-            let positions = &buffers.get(0).unwrap()
-                [position_view.offset()..position_view.offset() + position_view.length()];
-            let indices_accessor = primitive.indices().unwrap();
-            let indices_view = indices_accessor.view().unwrap();
-            let _indices_buffer = indices_view.buffer();
-            let indices = &buffers.get(0).unwrap()
-                [indices_view.offset()..indices_view.offset() + indices_view.length()];
-            info!("position {:?} indices {:?}", positions.len(), indices.len());
-            assert!(!positions.is_empty());
+    let mut indices_buf = None;
+    let mut positions_buf = None;
+    for scene in document.scenes() {
+        for node in scene.nodes() {
+            if let Some(mesh) = node.mesh() {
+                for primitive in mesh.primitives() {
+                    if let Some(indices) = primitive.indices() {
+                        let count = indices.count();
+                        let view = indices.view().unwrap();
+                        let index = view.buffer().index();
+                        let offset = view.offset();
+                        let length = view.length();
+                        let buffer = buffers.get(index).unwrap();
+                        let indices_buffer = &buffer[offset..offset + length];
+                        indices_buf = Some((indices_buffer.to_vec(), count));
+                    }
+
+                    for (semantic, accessor) in primitive.attributes() {
+                        let offset = accessor.offset();
+                        let count = accessor.count();
+                        let data_type = accessor.data_type();
+                        let dimensions = accessor.dimensions();
+                        let size_bytes = match dimensions {
+                            gltf::accessor::Dimensions::Scalar => size_of::<f32>(),
+                            gltf::accessor::Dimensions::Vec3 => size_of::<[f32; 3]>(),
+                            _ => size_of::<[f32; 3]>(),
+                        };
+                        let size = accessor.size();
+                        assert_eq!(size_bytes, size);
+                        let length = size_bytes * count;
+                        let view = accessor.view().unwrap();
+                        let index = view.buffer().index();
+                        let buffer = buffers.get(index).unwrap().clone();
+                        let positions_buffer = &buffer[offset..offset + length];
+
+                        match semantic {
+                            gltf::Semantic::Positions => {
+                                positions_buf = Some(positions_buffer.to_vec())
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+            }
         }
     }
+    let (indices, count) = indices_buf.unwrap();
+    let positions = positions_buf.unwrap();
+    (positions, (indices, count))
 }
 
-fn debug_gltf_json<'x>() -> (&'x [u8], (&'x [u8], u32)) {
+#[derive(Debug, Eq, PartialEq, Hash)]
+enum PrimitiveKind {
+    Position,
+    Normal,
+    Tangent,
+    TextureCoordinates,
+    Indices(usize),
+}
+
+/*
+fn load_model_gltf<'x>() -> HashMap<PrimitiveKind, Vec<Vec<u8>>> {
     use gltf::json::{accessor::*, mesh::*, *};
-    let kitten = include_bytes!("../../assets/kitten.gltf");
-    let binary = include_bytes!("../../assets/kitten_data.bin");
-    let mut indices = None;
-    let mut positions = None;
-    let mut normals = None;
-    let root: Root = Root::from_slice(kitten).unwrap();
+    // let kitten = include_bytes!("../../assets/kitten.gltf");
+    // let binary = include_bytes!("../../assets/kitten_data.bin");
+    let gltf_model =
+        include_bytes!("../../assets/kenney_piratekit_1.1/Models/glTF format/ship_light.gltf");
+    let binary =
+        include_bytes!("../../assets/kenney_piratekit_1.1/Models/glTF format/ship_light.bin");
+    let mut indices = Vec::with_capacity(32);
+    let mut positions = Vec::with_capacity(32);
+    let mut normals = Vec::with_capacity(32);
+    let mut meshes: HashMap<PrimitiveKind, Vec<Vec<u8>>> = HashMap::with_capacity(32);
+    // let root: Root = Root::from_slice(kitten).unwrap();
+    let root: Root = Root::from_slice(gltf_model).unwrap();
     for mesh in root.meshes {
         for primitive in mesh.primitives {
             // NOTE(alex): Load indices buffer.
@@ -275,7 +334,7 @@ fn debug_gltf_json<'x>() -> (&'x [u8], (&'x [u8], u32)) {
                     let offset = view.byte_offset.unwrap() as usize;
                     let length = view.byte_length as usize;
                     let indices_buffer = &binary[offset..offset + length];
-                    indices = Some((indices_buffer, count));
+                    indices.push((indices_buffer, count));
                 }
             }
 
@@ -306,16 +365,25 @@ fn debug_gltf_json<'x>() -> (&'x [u8], (&'x [u8], u32)) {
                     let buffer = &binary[offset..offset + length];
 
                     match semantic.unwrap() {
-                        Semantic::Positions => positions = Some(buffer),
-                        Semantic::Normals => normals = Some(buffer),
+                        Semantic::Positions => positions.push(buffer.to_vec()),
+                        Semantic::Normals => normals.push(buffer.to_vec()),
                         _ => (),
                     }
                 }
             }
         }
     }
-    (positions.unwrap(), indices.unwrap())
+    meshes.insert(PrimitiveKind::Position, positions);
+    meshes.insert(PrimitiveKind::Normal, normals);
+    // TODO(alex): Deal with loading multiple different model primitives, think of them as
+    // submodels, like the doors of a car.
+    // TODO(alex): Separate the count from buffer, put count in Indices(count).
+    // indices.into_iter().map(|buffer, count| ());
+    // meshes.insert(PrimitiveKind::Indices, indices);
+
+    meshes
 }
+*/
 
 fn main() {
     let _logger = setup_logger().unwrap();
