@@ -512,7 +512,8 @@ impl Renderer {
         // TODO(alex): Try out the higher level API, now that I have a better understanding of the
         // glTF formats, and we know the renderer is working.
         // let (positions, (indices, indices_count)) = load_model_gltf();
-        let (positions, (indices, indices_count)) = load_model();
+        let path = std::path::Path::new("./assets/kitten.gltf");
+        let (positions, (indices, indices_count)) = load_model(path);
 
         // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
         // so it makes sense to handle every kind of possible `VertexBufferDescriptor` during

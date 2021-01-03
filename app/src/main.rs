@@ -228,9 +228,9 @@ fn handle_input(event: &DeviceEvent, world: &mut World) {
 /// right now, so we're just allocating vectors and returning them. Must revisit this later.
 ///
 /// TODO(alex): Now I have to figure out a way to load more complex models.
-pub fn load_model<'x>() -> (Vec<u8>, (Vec<u8>, usize)) {
+pub fn load_model<'x>(path: &path::Path) -> (Vec<u8>, (Vec<u8>, usize)) {
     use core::mem::*;
-    let path = path::Path::new("./assets/kitten.gltf");
+    // let path = path::Path::new("./assets/kitten.gltf");
     let (document, buffers, _images) = gltf::import(path).expect("Could not open gltf file.");
 
     // NOTE(alex): So apparently there is no need to translate the positions, normals and so on
