@@ -512,8 +512,11 @@ impl Renderer {
         // TODO(alex): Try out the higher level API, now that I have a better understanding of the
         // glTF formats, and we know the renderer is working.
         // let (positions, (indices, indices_count)) = load_model_gltf();
-        let path = std::path::Path::new("./assets/kitten.gltf");
-        let (positions, (indices, indices_count)) = load_model(path);
+        // let path = std::path::Path::new("./assets/kitten.gltf");
+        let path =
+            std::path::Path::new("./assets/ship_light.gltf");
+        // let (positions, (indices, indices_count)) = load_model(path);
+        let model = load_model(path);
 
         // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
         // so it makes sense to handle every kind of possible `VertexBufferDescriptor` during
@@ -536,7 +539,8 @@ impl Renderer {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             // contents: bytemuck::cast_slice(&world.vertices),
-            contents: &positions,
+            // contents: &positions,
+            contents: &model.positions,
             // NOTE(alex): `usage: COPY_DST` is related to the staging buffers idea. This means that
             // this buffer will be used as the destination for some data.
             // The kind of buffer must also be specified, so you need the `VERTEX` usage here.
@@ -545,7 +549,8 @@ impl Renderer {
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
             // contents: bytemuck::cast_slice(&world.indices),
-            contents: &indices,
+            // contents: &indices,
+            contents: &model.indices,
             // NOTE(alex): We don't need `COPY_DST` here because this buffer won't be changing
             // value, if we think about these indices as being 1 geometric figure, they'll remain
             // the same, unless you wanted to quickly change it from a rectangle to some other
@@ -594,10 +599,12 @@ impl Renderer {
             instances,
             instance_buffer,
             depth_texture,
-            positions: positions.to_vec(),
+            // positions: positions.to_vec(),
+            positions: model.positions,
             // NOTE(alex): When dealing with buffers directly, we want to pass the number of index
             // elements, not the length of the buffer itself.
-            num_indices: indices_count as usize,
+            // num_indices: indices_count as usize,
+            num_indices: model.indices_count as usize,
         }
     }
 

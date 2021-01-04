@@ -213,6 +213,16 @@ fn handle_input(event: &DeviceEvent, world: &mut World) {
     }
 }
 
+struct Indices {
+    buffer: Vec<u8>,
+    count: usize,
+}
+pub struct Model {
+    positions: Vec<u8>,
+    indices: Vec<u8>,
+    indices_count: usize,
+}
+
 /// NOTE(alex): This is a higher level approach to loading the data, it uses the glTF-crate
 /// iterator API and we get types in rust-analyzer. The other approach of directly reading from the
 /// glTF-json API ends up accomplishing the same things, except that by using `include_bytes`
@@ -228,7 +238,8 @@ fn handle_input(event: &DeviceEvent, world: &mut World) {
 /// right now, so we're just allocating vectors and returning them. Must revisit this later.
 ///
 /// TODO(alex): Now I have to figure out a way to load more complex models.
-pub fn load_model<'x>(path: &path::Path) -> (Vec<u8>, (Vec<u8>, usize)) {
+// pub fn load_model<'x>(path: &path::Path) -> (Vec<u8>, (Vec<u8>, usize)) {
+pub fn load_model<'x>(path: &path::Path) -> Model {
     use core::mem::*;
     // let path = path::Path::new("./assets/kitten.gltf");
     let (document, buffers, _images) = gltf::import(path).expect("Could not open gltf file.");
@@ -248,21 +259,24 @@ pub fn load_model<'x>(path: &path::Path) -> (Vec<u8>, (Vec<u8>, usize)) {
     // Well, thinking about it a bit better, to change position we could just pass the
     // transformation value (vector or matrix) to the shader, and change the vertices there, as
     // the shader will have complete access to each vertex.
-    let mut indices_buf = None;
-    let mut positions_buf = None;
+    let mut indices = Vec::with_capacity(4);
+    let mut positions = Vec::with_capacity(4);
+    let mut counts = Vec::with_capacity(4);
     for scene in document.scenes() {
         for node in scene.nodes() {
             if let Some(mesh) = node.mesh() {
                 for primitive in mesh.primitives() {
-                    if let Some(indices) = primitive.indices() {
-                        let count = indices.count();
-                        let view = indices.view().unwrap();
+                    if let Some(indices_accessor) = primitive.indices() {
+                        let count = indices_accessor.count();
+                        let view = indices_accessor.view().unwrap();
                         let index = view.buffer().index();
                         let offset = view.offset();
                         let length = view.length();
                         let buffer = buffers.get(index).unwrap();
                         let indices_buffer = &buffer[offset..offset + length];
-                        indices_buf = Some((indices_buffer.to_vec(), count));
+                        // indices_buf = Some((indices_buffer.to_vec(), count));
+                        indices.push(indices_buffer.to_vec());
+                        counts.push(count);
                     }
 
                     for (semantic, accessor) in primitive.attributes() {
@@ -276,7 +290,7 @@ pub fn load_model<'x>(path: &path::Path) -> (Vec<u8>, (Vec<u8>, usize)) {
                             _ => size_of::<[f32; 3]>(),
                         };
                         let size = accessor.size();
-                        assert_eq!(size_bytes, size);
+                        // assert_eq!(size_bytes, size);
                         let length = size_bytes * count;
                         let view = accessor.view().unwrap();
                         let index = view.buffer().index();
@@ -285,7 +299,8 @@ pub fn load_model<'x>(path: &path::Path) -> (Vec<u8>, (Vec<u8>, usize)) {
 
                         match semantic {
                             gltf::Semantic::Positions => {
-                                positions_buf = Some(positions_buffer.to_vec())
+                                // positions_buf = Some(positions_buffer.to_vec())
+                                positions.push(positions_buffer.to_vec());
                             }
                             _ => (),
                         }
@@ -294,9 +309,18 @@ pub fn load_model<'x>(path: &path::Path) -> (Vec<u8>, (Vec<u8>, usize)) {
             }
         }
     }
-    let (indices, count) = indices_buf.unwrap();
-    let positions = positions_buf.unwrap();
-    (positions, (indices, count))
+    // let (indices, count) = indices_buf.unwrap();
+    // let positions = positions_buf.unwrap();
+    // (positions, (indices, count))
+    let model_positions = positions.into_iter().flatten().collect();
+    let model_indices = indices.into_iter().flatten().collect();
+    let count = counts.iter().sum();
+
+    Model {
+        positions: model_positions,
+        indices: model_indices,
+        indices_count: count,
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, Hash)]
