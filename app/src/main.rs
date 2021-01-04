@@ -237,8 +237,14 @@ pub struct Model {
 /// TODO(alex): This issue might be easy to solve, but I don't want to deal with lifetimes
 /// right now, so we're just allocating vectors and returning them. Must revisit this later.
 ///
-/// TODO(alex): Now I have to figure out a way to load more complex models.
-// pub fn load_model<'x>(path: &path::Path) -> (Vec<u8>, (Vec<u8>, usize)) {
+/// TODO(alex): We correctly load the `ship_light.gltf` file, a more complex model than the
+/// `kitten.gltf`. Now I have to read the other data:
+///
+/// - `NORMAL`
+/// - `TANGENT`
+/// - `TEXCOORD_0`
+///
+/// TODO(alex): Load material data and bind the textures to the drawn model.
 pub fn load_model<'x>(path: &path::Path) -> Model {
     use core::mem::*;
     // let path = path::Path::new("./assets/kitten.gltf");
@@ -309,9 +315,6 @@ pub fn load_model<'x>(path: &path::Path) -> Model {
             }
         }
     }
-    // let (indices, count) = indices_buf.unwrap();
-    // let positions = positions_buf.unwrap();
-    // (positions, (indices, count))
     let model_positions = positions.into_iter().flatten().collect();
     let model_indices = indices.into_iter().flatten().collect();
     let count = counts.iter().sum();
