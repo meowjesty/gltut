@@ -11,7 +11,7 @@ use winit::{dpi, window};
 
 use crate::{
     camera::{Camera, Projection},
-    load_model,
+    load_geometry,
     texture::Texture,
     vertex::Vertex,
     world::World,
@@ -134,9 +134,6 @@ pub struct Renderer {
     /// relation to the bind groups), you can still modify uniforms by writing to the buffer like
     /// we're doing here with the `staging_belt.copy_from_slice`.
     uniform_buffer: wgpu::Buffer,
-    /// NOTE(alex): Trying to figure out how to move vertices without changing the model buffer,
-    /// basically change them in the shader, instead of CPU.
-    offset_buffer: wgpu::Buffer,
     /// NOTE(alex): wgpu recommends putting binding groups accordingly to usage, so bindings that
     // are run per-frame (change the least) be bind group 0, per-pass bind group 1, and
     /// per-material bind group 2.
@@ -390,7 +387,7 @@ impl Renderer {
 
         let texture_bytes = include_bytes!("../../assets/tree.png");
         let texture = Texture::from_bytes(&device, &queue, texture_bytes).unwrap();
-        // NOTE(alex): Similar to how using uniforms require specifying the layout, before you can
+        // NOTE(alex): Similar to how using uniforms requires specifying the layout, before you can
         // actually bind the data into the GPU (tell the GPU how this data should be used, how
         // it's structured, which shaders use it). Similar to vulkan's
         // `VkDescriptorSetLayoutBinding` and the `entries` are like `VkWriteDescriptorSet`.
@@ -492,31 +489,11 @@ impl Renderer {
             usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
         });
 
-        let offset_descriptor = wgpu::VertexBufferDescriptor {
-            stride: core::mem::size_of::<glam::Vec2>() as wgpu::BufferAddress,
-            step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &[wgpu::VertexAttributeDescriptor {
-                offset: 0,
-                format: wgpu::VertexFormat::Float2,
-                shader_location: 10,
-            }],
-        };
-        let offset_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Offset x y buffer"),
-            contents: bytemuck::cast_slice(&[world.offset]),
-            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
-        });
-
         let staging_belt = wgpu::util::StagingBelt::new(1024);
 
-        // TODO(alex): Try out the higher level API, now that I have a better understanding of the
-        // glTF formats, and we know the renderer is working.
-        // let (positions, (indices, indices_count)) = load_model_gltf();
         // let path = std::path::Path::new("./assets/kitten.gltf");
-        let path =
-            std::path::Path::new("./assets/ship_light.gltf");
-        // let (positions, (indices, indices_count)) = load_model(path);
-        let model = load_model(path);
+        let path = std::path::Path::new("./assets/ship_light.gltf");
+        let geometry = load_geometry(path);
 
         // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
         // so it makes sense to handle every kind of possible `VertexBufferDescriptor` during
@@ -540,7 +517,7 @@ impl Renderer {
             label: Some("Vertex Buffer"),
             // contents: bytemuck::cast_slice(&world.vertices),
             // contents: &positions,
-            contents: &model.positions,
+            contents: &geometry.positions,
             // NOTE(alex): `usage: COPY_DST` is related to the staging buffers idea. This means that
             // this buffer will be used as the destination for some data.
             // The kind of buffer must also be specified, so you need the `VERTEX` usage here.
@@ -550,7 +527,7 @@ impl Renderer {
             label: Some("Index Buffer"),
             // contents: bytemuck::cast_slice(&world.indices),
             // contents: &indices,
-            contents: &model.indices,
+            contents: &geometry.indices,
             // NOTE(alex): We don't need `COPY_DST` here because this buffer won't be changing
             // value, if we think about these indices as being 1 geometric figure, they'll remain
             // the same, unless you wanted to quickly change it from a rectangle to some other
@@ -570,15 +547,15 @@ impl Renderer {
             hello_vs,
             hello_fs,
             &[&uniform_bind_group_layout, &texture_bind_group_layout],
-            &[Vertex::DESCRIPTOR, Instance::DESCRIPTOR, offset_descriptor],
+            &[Vertex::DESCRIPTOR, Instance::DESCRIPTOR],
         );
 
         let render_pipelines = vec![hello_render_pipeline];
 
-        let font = ab_glyph::FontArc::try_from_slice(include_bytes!(
-            "../../assets/Kosugi_maru/KosugiMaru-Regular.ttf"
-        ))
-        .unwrap();
+        // let font = ab_glyph::FontArc::try_from_slice(include_bytes!(
+        //     "../../assets/Kosugi_maru/KosugiMaru-Regular.ttf"
+        // ))
+        // .unwrap();
         // let glyph_brush = GlyphBrushBuilder::using_font(font).build(&device, render_format);
 
         Self {
@@ -591,7 +568,6 @@ impl Renderer {
             vertex_buffers: vec![vertex_buffer],
             index_buffers: vec![index_buffer],
             uniform_buffer,
-            offset_buffer,
             bind_groups: vec![uniform_bind_group, texture_bind_group],
             // glyph_brush,
             staging_belt,
@@ -599,12 +575,10 @@ impl Renderer {
             instances,
             instance_buffer,
             depth_texture,
-            // positions: positions.to_vec(),
-            positions: model.positions,
+            positions: geometry.positions,
             // NOTE(alex): When dealing with buffers directly, we want to pass the number of index
             // elements, not the length of the buffer itself.
-            // num_indices: indices_count as usize,
-            num_indices: model.indices_count as usize,
+            num_indices: geometry.indices_count as usize,
         }
     }
 
@@ -784,7 +758,6 @@ impl Renderer {
                         .set_vertex_buffer(0, self.vertex_buffers.get(0).unwrap().slice(..));
 
                     first_render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-                    first_render_pass.set_vertex_buffer(2, self.offset_buffer.slice(..));
 
                     // NOTE(alex): wgpu API takes advantage of ranges to specify the offset
                     // into the vertex buffer. `0..len()` means that the `gl_VertexIndex`

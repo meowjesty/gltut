@@ -217,10 +217,12 @@ struct Indices {
     buffer: Vec<u8>,
     count: usize,
 }
-pub struct Model {
+
+pub struct Geometry {
     positions: Vec<u8>,
     indices: Vec<u8>,
     indices_count: usize,
+    texture_coordinates: Vec<u8>,
 }
 
 /// NOTE(alex): This is a higher level approach to loading the data, it uses the glTF-crate
@@ -234,6 +236,11 @@ pub struct Model {
 /// This function is a bit more complete than the direct json manipulation one, as it loops through
 /// the whole scene looking for data, while the other just goes straight to meshes.
 ///
+/// [Meshes](https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#meshes)
+///
+/// How to deal with texture coordinate sets (TEXCOORD_0, _1, ...):
+/// https://gamedev.stackexchange.com/questions/132001/multiple-texture-coordinates-per-vertex-directx11
+///
 /// TODO(alex): This issue might be easy to solve, but I don't want to deal with lifetimes
 /// right now, so we're just allocating vectors and returning them. Must revisit this later.
 ///
@@ -242,12 +249,14 @@ pub struct Model {
 ///
 /// - `NORMAL`
 /// - `TANGENT`
-/// - `TEXCOORD_0`
 ///
 /// TODO(alex): Load material data and bind the textures to the drawn model.
-pub fn load_model<'x>(path: &path::Path) -> Model {
+/// TODO(alex): Load texture coordinate sets correctly, we're currently loading every set in 1
+/// buffer, which probably breaks when the model actually has a `TEXCOORD_0, TEXCOORD_1`.
+/// TODO(alex): We need to get the correct types for some of these buffers, `TEXCOORD_0` may be
+/// a `Vec2<f32>`, or `Vec2<u16>`, or `Vec2<u8>`.
+pub fn load_geometry<'x>(path: &path::Path) -> Geometry {
     use core::mem::*;
-    // let path = path::Path::new("./assets/kitten.gltf");
     let (document, buffers, _images) = gltf::import(path).expect("Could not open gltf file.");
 
     // NOTE(alex): So apparently there is no need to translate the positions, normals and so on
@@ -268,6 +277,7 @@ pub fn load_model<'x>(path: &path::Path) -> Model {
     let mut indices = Vec::with_capacity(4);
     let mut positions = Vec::with_capacity(4);
     let mut counts = Vec::with_capacity(4);
+    let mut texture_coordinates = Vec::with_capacity(4);
     for scene in document.scenes() {
         for node in scene.nodes() {
             if let Some(mesh) = node.mesh() {
@@ -301,12 +311,15 @@ pub fn load_model<'x>(path: &path::Path) -> Model {
                         let view = accessor.view().unwrap();
                         let index = view.buffer().index();
                         let buffer = buffers.get(index).unwrap().clone();
-                        let positions_buffer = &buffer[offset..offset + length];
+                        let attributes = &buffer[offset..offset + length];
 
                         match semantic {
                             gltf::Semantic::Positions => {
                                 // positions_buf = Some(positions_buffer.to_vec())
-                                positions.push(positions_buffer.to_vec());
+                                positions.push(attributes.to_vec());
+                            }
+                            gltf::Semantic::TexCoords(set_index) => {
+                                texture_coordinates.push(attributes.to_vec())
                             }
                             _ => (),
                         }
@@ -315,14 +328,16 @@ pub fn load_model<'x>(path: &path::Path) -> Model {
             }
         }
     }
-    let model_positions = positions.into_iter().flatten().collect();
-    let model_indices = indices.into_iter().flatten().collect();
+    let geometry_positions = positions.into_iter().flatten().collect();
+    let geometry_indices = indices.into_iter().flatten().collect();
     let count = counts.iter().sum();
+    let geometry_texture_coordinates = texture_coordinates.into_iter().flatten().collect();
 
-    Model {
-        positions: model_positions,
-        indices: model_indices,
+    Geometry {
+        positions: geometry_positions,
+        indices: geometry_indices,
         indices_count: count,
+        texture_coordinates: geometry_texture_coordinates,
     }
 }
 
