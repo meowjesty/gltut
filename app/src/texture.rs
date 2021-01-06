@@ -1,3 +1,4 @@
+use core::mem::*;
 use std::{
     num::{NonZeroU32, NonZeroU8},
     path,
@@ -13,6 +14,17 @@ pub struct Texture {
 }
 
 impl Texture {
+    pub const SIZE: wgpu::BufferAddress = size_of::<[f32; 2]>() as wgpu::BufferAddress;
+    pub const DESCRIPTOR: wgpu::VertexBufferDescriptor<'static> = wgpu::VertexBufferDescriptor {
+        stride: Self::SIZE,
+        step_mode: wgpu::InputStepMode::Vertex,
+        attributes: &[wgpu::VertexAttributeDescriptor {
+            offset: 0,
+            shader_location: 1,
+            format: wgpu::VertexFormat::Float2,
+        }],
+    };
+
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
     /// NOTE(alex): Special kind of texture that is used for depth testing (**Depth Buffer**).

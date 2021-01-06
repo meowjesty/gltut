@@ -274,6 +274,14 @@ pub fn load_geometry<'x>(path: &path::Path) -> Geometry {
     // Well, thinking about it a bit better, to change position we could just pass the
     // transformation value (vector or matrix) to the shader, and change the vertices there, as
     // the shader will have complete access to each vertex.
+    // NOTE(alex): The glTF primitives and buffer view relation works as follows:
+    // - `POSITION: 0` means that the buffer view 0 holds every position `vec3`;
+    // - `NORMAL: 1` means that the buffer view 1 holds every normal `vec3`;
+    // - `TANGENT: 2` means that the buffer view 2 holds every tangent `vec4`;
+    // - `TEXCOORD_0: 3` means that the buffer view 3 holds every texture coordinates `vec2`;
+    // The main difference will be seen on `indices`, which will be different for each `Primitive`,
+    // so `primitives[0] -> indices: 4`, while `primitives[1] -> indices: 5`, this same behaviour
+    // is seen on `primitives -> material`.
     let mut indices = Vec::with_capacity(4);
     let mut positions = Vec::with_capacity(4);
     let mut counts = Vec::with_capacity(4);

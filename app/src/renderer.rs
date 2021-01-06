@@ -403,7 +403,7 @@ impl Renderer {
                         visibility: wgpu::ShaderStage::FRAGMENT,
                         ty: wgpu::BindingType::SampledTexture {
                             dimension: wgpu::TextureViewDimension::D2,
-                            component_type: wgpu::TextureComponentType::Uint,
+                            component_type: wgpu::TextureComponentType::Float,
                             multisampled: false,
                         },
                         count: None,
@@ -501,6 +501,35 @@ impl Renderer {
         // out of here into a more clean `Pipeline` struct, but I guess that's about it.
         let hello_vs = wgpu::include_spirv!("./shaders/hello.vert.spv");
         let hello_fs = wgpu::include_spirv!("./shaders/hello.frag.spv");
+
+        /*
+        let size_of_vec3 = core::mem::size_of::<[f32; 3]>();
+        let size_of_vec2 = core::mem::size_of::<[f32; 2]>();
+        let size_of_buffer = size_of_vec3 + size_of_vec2;
+        let vertex_buffer_size = size_of_buffer as wgpu::BufferAddress;
+        let vertex_buffer_descriptor = wgpu::VertexBufferDescriptor {
+            stride: vertex_buffer_size,
+            step_mode: wgpu::InputStepMode::Vertex,
+            // attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3],
+            attributes: &[
+                wgpu::VertexAttributeDescriptor {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float3,
+                },
+                wgpu::VertexAttributeDescriptor {
+                    // FIXME(alex): VkPhysicalDeviceLimits::maxVertexInputAttributeOffset (2047)
+                    // Can't do this for the offset, we need to interleave the vertex buffer with
+                    // vertices->texture->vertices->texture.
+                    // The buffer in glTF is probably structured this way?
+                    offset: geometry.positions.len() as u64,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float2,
+                },
+            ],
+        };
+        */
+
         // NOTE(alex): The pipeline holds the buffer descriptors, it has to understand what kind of
         // data will be passed to the shaders, so the descriptors must be created before the
         // pipeline.
@@ -537,6 +566,11 @@ impl Renderer {
             // transformations to the vertices themselves, but the indices stay constant.
             usage: wgpu::BufferUsage::INDEX,
         });
+        let texture_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Texture Buffer"),
+            contents: &geometry.texture_coordinates,
+            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+        });
 
         let depth_texture = Texture::create_depth_texture(&device, &swap_chain_descriptor);
 
@@ -547,7 +581,12 @@ impl Renderer {
             hello_vs,
             hello_fs,
             &[&uniform_bind_group_layout, &texture_bind_group_layout],
-            &[Vertex::DESCRIPTOR, Instance::DESCRIPTOR],
+            &[
+                Vertex::DESCRIPTOR,
+                Texture::DESCRIPTOR,
+                Instance::DESCRIPTOR,
+            ],
+            // &[vertex_buffer_descriptor, Instance::DESCRIPTOR],
         );
 
         let render_pipelines = vec![hello_render_pipeline];
@@ -565,7 +604,7 @@ impl Renderer {
             swap_chain_descriptor,
             swap_chain,
             render_pipelines,
-            vertex_buffers: vec![vertex_buffer],
+            vertex_buffers: vec![vertex_buffer, texture_buffer],
             index_buffers: vec![index_buffer],
             uniform_buffer,
             bind_groups: vec![uniform_bind_group, texture_bind_group],
@@ -758,6 +797,8 @@ impl Renderer {
                         .set_vertex_buffer(0, self.vertex_buffers.get(0).unwrap().slice(..));
 
                     first_render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+                    first_render_pass
+                        .set_vertex_buffer(2, self.vertex_buffers.get(1).unwrap().slice(..));
 
                     // NOTE(alex): wgpu API takes advantage of ranges to specify the offset
                     // into the vertex buffer. `0..len()` means that the `gl_VertexIndex`
