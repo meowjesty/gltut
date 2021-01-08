@@ -15,3 +15,4 @@
 **.log
 assets/
 !notes/assets
+debug_file.json

@@ -492,7 +492,7 @@ impl Renderer {
         let staging_belt = wgpu::util::StagingBelt::new(1024);
 
         // let path = std::path::Path::new("./assets/kitten.gltf");
-        let path = std::path::Path::new("./assets/ship_light.gltf");
+        let path = std::path::Path::new("./assets/scene.gltf");
         let geometry = load_geometry(path);
 
         // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
@@ -580,10 +580,11 @@ impl Renderer {
             &swap_chain_descriptor,
             hello_vs,
             hello_fs,
-            &[&uniform_bind_group_layout, &texture_bind_group_layout],
+            // &[&uniform_bind_group_layout, &texture_bind_group_layout],
+            &[&uniform_bind_group_layout],
             &[
                 Vertex::DESCRIPTOR,
-                Texture::DESCRIPTOR,
+                // Texture::DESCRIPTOR,
                 Instance::DESCRIPTOR,
             ],
             // &[vertex_buffer_descriptor, Instance::DESCRIPTOR],
@@ -597,6 +598,11 @@ impl Renderer {
         // .unwrap();
         // let glyph_brush = GlyphBrushBuilder::using_font(font).build(&device, render_format);
 
+        let vertex_buffers = vec![vertex_buffer, texture_buffer];
+        let index_buffers = vec![index_buffer];
+        // let bind_groups = vec![uniform_bind_group, texture_bind_group];
+        let bind_groups = vec![uniform_bind_group];
+
         Self {
             surface,
             device,
@@ -604,10 +610,10 @@ impl Renderer {
             swap_chain_descriptor,
             swap_chain,
             render_pipelines,
-            vertex_buffers: vec![vertex_buffer, texture_buffer],
-            index_buffers: vec![index_buffer],
+            vertex_buffers,
+            index_buffers,
             uniform_buffer,
-            bind_groups: vec![uniform_bind_group, texture_bind_group],
+            bind_groups,
             // glyph_brush,
             staging_belt,
             size: window_size,
