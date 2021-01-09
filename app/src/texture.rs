@@ -6,6 +6,8 @@ use std::{
 
 use image::GenericImageView;
 
+use crate::TEXTURE_SHADER_LOCATION;
+
 #[derive(Debug)]
 pub struct Texture {
     pub(crate) texture: wgpu::Texture,
@@ -20,7 +22,7 @@ impl Texture {
         step_mode: wgpu::InputStepMode::Vertex,
         attributes: &[wgpu::VertexAttributeDescriptor {
             offset: 0,
-            shader_location: 1,
+            shader_location: TEXTURE_SHADER_LOCATION,
             format: wgpu::VertexFormat::Float2,
         }],
     };

@@ -18,6 +18,7 @@ use winit::{
 };
 
 pub(crate) mod camera;
+pub(crate) mod model;
 pub(crate) mod renderer;
 pub(crate) mod texture;
 pub(crate) mod vertex;
@@ -26,6 +27,16 @@ pub(crate) mod world;
 use camera::{Camera, Projection};
 use renderer::Uniforms;
 use vertex::cube;
+
+// NOTE(alex): Shader locations:
+pub const TEXTURE_SHADER_LOCATION: wgpu::ShaderLocation = 1;
+pub const INSTANCE_SHADER_LOCATION: wgpu::ShaderLocation = 10;
+pub const VERTEX_SHADER_LOCATION: wgpu::ShaderLocation = 0;
+
+// NOTE(alex): Binding index values:
+pub const UNIFORM_BINDING_INDEX: u32 = 0;
+pub const TEXTURE_BINDING_INDEX: u32 = 1;
+pub const SAMPLER_BINDING_INDEX: u32 = 2;
 
 pub struct StagingBuffer {
     buffer: wgpu::Buffer,
@@ -213,268 +224,6 @@ fn handle_input(event: &DeviceEvent, world: &mut World) {
     }
 }
 
-struct Indices {
-    buffer: Vec<u8>,
-    count: usize,
-}
-
-pub struct Geometry {
-    positions: Vec<u8>,
-    indices: Vec<u8>,
-    indices_count: usize,
-    texture_coordinates: Vec<u8>,
-}
-
-pub fn debug_accessor(accessor: &gltf::Accessor, mesh_name: &str) -> String {
-    let count = accessor.count();
-    // "bufferView": 3,
-    let index = accessor.index();
-    // "max": "Some(Array([Number(375.3972473144531), Number(326.95660400390625)]))",
-    let max = accessor.max();
-    // "min": "Some(Array([Number(-375.3972473144531), Number(-519.8281860351563)]))",
-    let min = accessor.min();
-    let name = accessor.name();
-    let normalized = accessor.normalized();
-    let offset = accessor.offset();
-    let size = accessor.size();
-
-    let view = accessor.view().unwrap();
-    let byte_offset = view.offset();
-
-    format!(
-        r#"
-        {:?}: {{
-            "count": "{:?}",
-            "index": "{:?}",
-            "max": "{:?}",
-            "min": "{:?}",
-            "name": "{:?}",
-            "normalized": "{:?}",
-            "offset": "{:?}",
-            "size": "{:?}"
-            "byte_offset": "{:?}"
-        }}
-    "#,
-        mesh_name, count, index, max, min, name, normalized, offset, size, byte_offset
-    )
-}
-
-/// NOTE(alex): This is a higher level approach to loading the data, it uses the glTF-crate
-/// iterator API and we get types in rust-analyzer. The other approach of directly reading from the
-/// glTF-json API ends up accomplishing the same things, except that by using `include_bytes`
-/// instead of `gltf::import` we get a `'static` lifetime for our buffers, which allows us to
-/// easily return slices, meanwhile in the iterator API we're loading the buffer locally, meaning
-/// that we can't just return slices into it (can't borrow something allocated inside a
-/// non-static lifetime function).
-///
-/// This function is a bit more complete than the direct json manipulation one, as it loops through
-/// the whole scene looking for data, while the other just goes straight to meshes.
-///
-/// [Meshes](https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#meshes)
-///
-/// How to deal with texture coordinate sets (TEXCOORD_0, _1, ...):
-/// https://gamedev.stackexchange.com/questions/132001/multiple-texture-coordinates-per-vertex-directx11
-///
-/// TODO(alex): This issue might be easy to solve, but I don't want to deal with lifetimes
-/// right now, so we're just allocating vectors and returning them. Must revisit this later.
-///
-/// TODO(alex): We correctly load the `ship_light.gltf` file, a more complex model than the
-/// `kitten.gltf`. Now I have to read the other data:
-///
-/// - `NORMAL`
-/// - `TANGENT`
-///
-/// TODO(alex): Load material data and bind the textures to the drawn model.
-/// TODO(alex): Load texture coordinate sets correctly, we're currently loading every set in 1
-/// buffer, which probably breaks when the model actually has a `TEXCOORD_0, TEXCOORD_1`.
-/// This doesn't work even when we have only 1 set! Why? Check RenderDoc.
-/// TODO(alex): We need to get the correct types for some of these buffers, `TEXCOORD_0` may be
-/// a `Vec2<f32>`, or `Vec2<u16>`, or `Vec2<u8>`.
-/// TODO(alex): To get the mesh data, we don't need to walk through the `scenes`, this would only
-/// be neccessary if we wanted to render the whole scene as it's described in the glTF file.
-/// I'm not interested in this right now, but it doesn't affect us in any way to **keep things as
-/// they are**.
-pub fn load_geometry<'x>(path: &path::Path) -> Geometry {
-    use core::mem::*;
-    let (document, buffers, _images) = gltf::import(path).expect("Could not open gltf file.");
-
-    // NOTE(alex): So apparently there is no need to translate the positions, normals and so on
-    // into our custom structures, it seems like a waste of effort when glTF already has everything
-    // nicely packed into its buffers.
-    // To access we index into each buffer by type, grab from offset to length + offset and look
-    // up what type of buffer data this is (`target`).
-    // It looks like there are more aspects to this whole process, like how to handle the whole
-    // scene, maybe we can navigate from scene->meshes->buffers? Would this be neccessary though?
-    // And finally, how would we change the positions, when all we have are buffers of data, but no
-    // way do stuff like `vertex.x * some_rotation * delta_time`? I'll start with this direct
-    // approach of buffer->gpu, and later I see how to efficiently load individual vertices into
-    // a `Vertex`, then `Mesh` and whatever else is needed.
-    // I'm not even sure right now what transform movement entails.
-    // Well, thinking about it a bit better, to change position we could just pass the
-    // transformation value (vector or matrix) to the shader, and change the vertices there, as
-    // the shader will have complete access to each vertex.
-    // NOTE(alex): The glTF primitives and buffer view relation works as follows:
-    // - `POSITION: 0` means that the buffer view 0 holds every position `vec3`;
-    // - `NORMAL: 1` means that the buffer view 1 holds every normal `vec3`;
-    // - `TANGENT: 2` means that the buffer view 2 holds every tangent `vec4`;
-    // - `TEXCOORD_0: 3` means that the buffer view 3 holds every texture coordinates `vec2`;
-    // The main difference will be seen on `indices`, which will be different for each `Primitive`,
-    // so `primitives[0] -> indices: 4`, while `primitives[1] -> indices: 5`, this same behaviour
-    // is seen on `primitives -> material.
-    let mut indices = Vec::with_capacity(4);
-    let mut positions = Vec::with_capacity(4);
-    let mut counts = Vec::with_capacity(4);
-    let mut texture_coordinates = Vec::with_capacity(4);
-    let mut num_primitives = 0;
-    use std::fs::*;
-    use std::io::prelude::*;
-    let mut debug_file = File::create("debug_file.json").unwrap();
-    let mut num_positions = 0;
-    let mut num_texture_coordinates = 0;
-    // for scene in document.scenes() {
-    // for node in scene.nodes() {
-    // if let Some(mesh) = node.mesh() {
-    for mesh in document.meshes() {
-        for primitive in mesh.primitives() {
-            if let Some(indices_accessor) = primitive.indices() {
-                let count = indices_accessor.count();
-                let view = indices_accessor.view().unwrap();
-                let index = view.buffer().index();
-                let offset = view.offset();
-                let length = view.length();
-                let buffer = buffers.get(index).unwrap();
-                let indices_buffer = &buffer[offset..offset + length];
-                // indices_buf = Some((indices_buffer.to_vec(), count));
-                indices.push(indices_buffer.to_vec());
-                counts.push(count);
-            }
-
-            for (semantic, accessor) in primitive.attributes() {
-                debug_file.write_all(
-                    debug_accessor(&accessor, &mesh.name().unwrap_or("nameless")).as_bytes(),
-                );
-                // NOTE(alex): Number of components, if we have VEC3 as the data type, then to get
-                // the number of bytes would be something like `count * size_of(VEC3)`.
-                let data_type = accessor.data_type();
-                let data_size = match data_type {
-                    gltf::accessor::DataType::I8 => size_of::<i8>(),
-                    gltf::accessor::DataType::U8 => size_of::<u8>(),
-                    gltf::accessor::DataType::I16 => size_of::<i16>(),
-                    gltf::accessor::DataType::U16 => size_of::<u16>(),
-                    gltf::accessor::DataType::U32 => size_of::<u32>(),
-                    gltf::accessor::DataType::F32 => size_of::<f32>(),
-                };
-                let dimensions = accessor.dimensions();
-                let size_bytes = match dimensions {
-                    gltf::accessor::Dimensions::Scalar => data_size,
-                    gltf::accessor::Dimensions::Vec2 => data_size * 2,
-                    gltf::accessor::Dimensions::Vec3 => data_size * 3,
-                    gltf::accessor::Dimensions::Vec4 => data_size * 4,
-                    gltf::accessor::Dimensions::Mat2 => data_size * 2 * 2,
-                    gltf::accessor::Dimensions::Mat3 => data_size * 3 * 3,
-                    gltf::accessor::Dimensions::Mat4 => data_size * 4 * 4,
-                };
-                let count = accessor.count();
-                let length = size_bytes * count;
-                let view = accessor.view().unwrap();
-                let byte_offset = view.offset();
-                // NOTE(alex): `bufferView: 2` this is the buffer view index in the accessors.
-                // let view_index = view.index();
-                let index = view.buffer().index();
-                // TODO(alex): This will always be `0` for our `scene.gltf` model.
-                assert_eq!(index, 0);
-                let buffer = buffers.get(index).unwrap();
-                let attributes = &buffer[byte_offset..byte_offset + length];
-
-                match semantic {
-                    gltf::Semantic::Positions => {
-                        // positions_buf = Some(positions_buffer.to_vec())
-                        positions.push(attributes.to_vec());
-                        num_positions += 1;
-                        println!(
-                            "positions view {:?} accessor {:?} buffer {:?} byte_offset {:?}",
-                            view.index(),
-                            accessor.index(),
-                            view.buffer().index(),
-                            byte_offset,
-                        );
-                        println!(
-                            "positions size_bytes {:?} * count {:?} = {:?}",
-                            size_bytes,
-                            count,
-                            size_bytes * count
-                        );
-                        // FIXME(alex): The main problem appears to be here.
-                        // TODO(alex): This assertion fails, we're reading only half the vertices
-                        // `55872`, instead of `111744`!
-                        assert_eq!(view.length(), attributes.len());
-                    }
-                    gltf::Semantic::TexCoords(set_index) => {
-                        texture_coordinates.push(attributes.to_vec());
-                        num_texture_coordinates += 1;
-                        println!(
-                            "textures view {:?} accessor {:?} buffer {:?} byte_offset {:?}",
-                            view.index(),
-                            accessor.index(),
-                            view.buffer().index(),
-                            byte_offset,
-                        );
-                        println!(
-                            "textures size_bytes {:?} * count {:?} = {:?}",
-                            size_bytes,
-                            count,
-                            size_bytes * count
-                        );
-                        assert_eq!(view.length(), attributes.len());
-                    }
-                    _ => (),
-                }
-
-                num_primitives += 1;
-                println!(
-                    "num primitives {:?} -> num_positions {:?} -> num_textures {:?}",
-                    num_primitives, num_positions, num_texture_coordinates,
-                );
-            }
-        }
-    }
-    // }
-    // }
-    // TODO(alex): We're getting correct values for indexing, count.
-    // `positions view 2 accessor 0 buffer 0`
-    // `textures view 1 accessor 3 buffer 0`
-    // `positions count 4656 -> textures_count 4656`
-    let geometry_positions = positions.into_iter().flatten().collect();
-    let geometry_indices = indices.into_iter().flatten().collect();
-    let count = counts.iter().sum();
-    let geometry_texture_coordinates = texture_coordinates.into_iter().flatten().collect();
-
-    let geometry = Geometry {
-        positions: geometry_positions,
-        indices: geometry_indices,
-        indices_count: count,
-        texture_coordinates: geometry_texture_coordinates,
-    };
-
-    let positions_count = geometry.positions.len() / size_of::<[f32; 3]>();
-    let textures_count = geometry.texture_coordinates.len() / size_of::<[f32; 2]>();
-    println!(
-        "positions count {:?} -> textures_count {:?}",
-        positions_count, textures_count
-    );
-
-    geometry
-}
-
-#[derive(Debug, Eq, PartialEq, Hash)]
-enum PrimitiveKind {
-    Position,
-    Normal,
-    Tangent,
-    TextureCoordinates,
-    Indices(usize),
-}
-
 /*
 fn load_model_gltf<'x>() -> HashMap<PrimitiveKind, Vec<Vec<u8>>> {
     use gltf::json::{accessor::*, mesh::*, *};
@@ -555,10 +304,6 @@ fn load_model_gltf<'x>() -> HashMap<PrimitiveKind, Vec<Vec<u8>>> {
 fn main() {
     let _logger = setup_logger().unwrap();
 
-    // debug_glb();
-    // debug_gltf_json();
-    // panic!("Debugging.");
-
     let (mut pool, spawner) = {
         let local_pool = futures::executor::LocalPool::new();
         let spawner = local_pool.spawner();
@@ -575,74 +320,14 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    /*
-    let (mut vertices, mut indices) = cube(
-        glam::Vec3::new(5.0, 5.0, 0.0),
-        5.0,
-        0,
-        glam::Vec3::new(1.0, 0.0, 0.0),
-    );
-
-    let (mut high_z_vertices, mut high_z_indices) = cube(
-        glam::Vec3::new(-10.0, -10.0, 10.0),
-        5.0,
-        24,
-        glam::Vec3::new(0.0, 1.0, 1.0),
-    );
-
-    let (mut neg_z_vertices, mut neg_z_indices) = cube(
-        glam::Vec3::new(10.0, 10.0, -10.0),
-        5.0,
-        48,
-        glam::Vec3::new(0.0, 1.0, 1.0),
-    );
-
-    let (mut zeroed_vertices, mut zeroed_indices) = cube(
-        glam::Vec3::new(0.0, 0.0, 0.0),
-        10.0,
-        72,
-        glam::Vec3::new(0.0, 1.0, 1.0),
-    );
-
-    vertices.append(&mut high_z_vertices);
-    vertices.append(&mut neg_z_vertices);
-    vertices.append(&mut zeroed_vertices);
-    indices.append(&mut high_z_indices);
-    indices.append(&mut neg_z_indices);
-    indices.append(&mut zeroed_indices);
-
-    for i in 1..12 {
-        let (mut vs, mut is) = cube(
-            glam::Vec3::new(
-                5.0 + (i as f32 * 5.0),
-                5.0 + (i as f32 * 5.0),
-                5.0 + (i as f32 * 5.0),
-            ),
-            5.0,
-            72 + (i * 24),
-            glam::Vec3::new(0.0, 1.0, 1.0),
-        );
-
-        vertices.append(&mut vs);
-        indices.append(&mut is);
-    }
-    */
-
-    let (debug_vertices, indices) = cube(
-        glam::Vec3::new(0.0, 0.0, 0.0),
-        5.0,
-        0,
-        glam::Vec3::new(0.0, 1.0, 1.0),
-    );
-
     let mut world = World {
         // NOTE(alex): Position is done in counter-clockwise fashion, starting from the middle point
         // in this case.
-        debug_vertices,
+        // debug_vertices,
         // NOTE(alex): These indices will work from:
         // middle->left->right (implicit back to middle);
         // middle->right->up left (implicit back to middle);
-        debug_indices: indices,
+        // debug_indices: indices,
         camera: Camera {
             // eye: (0.0, 1.0, 2.0).into(),
             // target: (0.0, 0.0, 0.0).into(),
@@ -669,7 +354,7 @@ fn main() {
             z_far: 100.0,
         },
         // TODO(alex): Mouse is moving too fast, maybe something wrong with the math?
-        camera_controller: CameraController::new(1.0, 0.2),
+        camera_controller: CameraController::new(0.3, 0.1),
         uniforms: Uniforms::default(),
         offset: glam::const_vec2!([1.0, 1.0]),
     };

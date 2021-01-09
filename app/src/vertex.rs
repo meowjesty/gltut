@@ -2,6 +2,8 @@ use core::mem::*;
 
 use bytemuck::{Pod, Zeroable};
 
+use crate::VERTEX_SHADER_LOCATION;
+
 #[repr(C)]
 #[derive(Copy, Clone, Default, Debug, PartialEq, Pod, Zeroable)]
 pub struct Vertex {
@@ -30,7 +32,7 @@ impl Vertex {
         attributes: &[
             wgpu::VertexAttributeDescriptor {
                 offset: 0,
-                shader_location: 0,
+                shader_location: VERTEX_SHADER_LOCATION,
                 format: wgpu::VertexFormat::Float3,
             },
             // NOTE(alex): This is not the way to change the data contained in this buffer, we must

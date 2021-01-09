@@ -7,7 +7,7 @@
         ],
         "executable": "C:\\dev\\rust\\gltut\\target\\debug\\app.exe",
         "inject": false,
-        "numQueuedFrames": 0,
+        "numQueuedFrames": 1,
         "options": {
             "allowFullscreen": true,
             "allowVSync": true,

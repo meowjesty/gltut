@@ -1,4 +1,4 @@
-use std::iter;
+use std::{char::UNICODE_VERSION, iter};
 
 use bytemuck::{Pod, Zeroable};
 use futures::{task, task::LocalSpawnExt};
@@ -11,10 +11,11 @@ use winit::{dpi, window};
 
 use crate::{
     camera::{Camera, Projection},
-    load_geometry,
+    model::{load_model, Model},
     texture::Texture,
     vertex::Vertex,
     world::World,
+    INSTANCE_SHADER_LOCATION, SAMPLER_BINDING_INDEX, TEXTURE_BINDING_INDEX, UNIFORM_BINDING_INDEX,
 };
 
 #[repr(C)]
@@ -60,34 +61,38 @@ impl Instance {
         attributes: &[
             wgpu::VertexAttributeDescriptor {
                 offset: 0,
-                shader_location: 3,
+                shader_location: INSTANCE_SHADER_LOCATION,
                 format: wgpu::VertexFormat::Float4,
             },
             wgpu::VertexAttributeDescriptor {
                 offset: core::mem::size_of::<glam::Vec4>() as wgpu::BufferAddress,
-                shader_location: 4,
+                shader_location: INSTANCE_SHADER_LOCATION + 1,
                 format: wgpu::VertexFormat::Float4,
             },
             wgpu::VertexAttributeDescriptor {
                 offset: (core::mem::size_of::<glam::Vec4>() * 2) as wgpu::BufferAddress,
-                shader_location: 5,
+                shader_location: INSTANCE_SHADER_LOCATION + 2,
                 format: wgpu::VertexFormat::Float4,
             },
             wgpu::VertexAttributeDescriptor {
                 offset: (core::mem::size_of::<glam::Vec4>() * 3) as wgpu::BufferAddress,
-                shader_location: 6,
+                shader_location: INSTANCE_SHADER_LOCATION + 3,
                 format: wgpu::VertexFormat::Float4,
             },
         ],
     };
 
     pub fn model_matrix(&self) -> glam::Mat4 {
-        glam::Mat4::from_rotation_translation(self.rotation, self.position.xyz())
+        glam::Mat4::from_scale_rotation_translation(
+            glam::const_vec3!([0.5, 0.5, 0.5]),
+            self.rotation,
+            self.position.xyz(),
+        )
     }
 }
 
+// FIXME(alex): The first model renders fine, but the second is stretched and messed up.
 const NUM_INSTANCES_PER_ROW: u32 = 5;
-
 /// TODO(alex): There needs to be a separation between things here and an actual `Pipeline`.
 /// As it stands, `Renderer::new()` will create a pipeline with very specific details, that
 /// can't be easily changed (I could set them in the `renderer` instance, but not a good solution),
@@ -121,11 +126,6 @@ pub struct Renderer {
     /// I've seen the notion of having a single _uber shader_, but it doesn't seem like the best
     /// strategy. Each shader is an optmized program, and you need a pipeline for each.
     render_pipelines: Vec<wgpu::RenderPipeline>,
-    vertex_buffers: Vec<wgpu::Buffer>,
-    /// NOTE(alex): Indices can be thought of as pointers into the vertex buffer, they take care of
-    /// duplicated vertices, by essentially treating each vertex as a "thing", that's why
-    /// the pointer analogy is so fitting here.
-    index_buffers: Vec<wgpu::Buffer>,
     /// NOTE(alex): Uniforms in wgpu (and vulkan) are different from uniforms in OpenGL.
     /// Here we can't dynamically set uniforms with a call like `glUniform2f(id, x, y);`, as
     /// it is set in stone at pipeline creation (`bind_group`).
@@ -192,8 +192,7 @@ pub struct Renderer {
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
     depth_texture: Texture,
-    num_indices: usize,
-    positions: Vec<u8>,
+    model: Model,
 }
 
 impl Renderer {
@@ -285,8 +284,8 @@ impl Renderer {
                 // TODO(alex): This brings a new question of how do we have glTF models with
                 // different `IndexFormat`s? Is this even desirable? Probably not, but is there a
                 // way to convert the files to use the desired format?
-                // index_format: wgpu::IndexFormat::Uint32,
-                index_format: wgpu::IndexFormat::Uint16,
+                index_format: wgpu::IndexFormat::Uint32,
+                // index_format: wgpu::IndexFormat::Uint16,
                 vertex_buffers: &vertex_buffer_descriptors,
             },
             sample_count: 1,
@@ -344,7 +343,7 @@ impl Renderer {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Bind group for uniforms (shader globals)"),
                 entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
+                    binding: UNIFORM_BINDING_INDEX,
                     visibility: wgpu::ShaderStage::VERTEX,
                     // ty: wgpu::BindingType::Buffer {
                     //     min_binding_size: None,
@@ -375,7 +374,7 @@ impl Renderer {
             label: Some("Uniform bind group"),
             layout: &uniform_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
-                binding: 0,
+                binding: UNIFORM_BINDING_INDEX,
                 resource: wgpu::BindingResource::Buffer(uniform_buffer.slice(..)),
                 // resource: wgpu::BindingResource::Buffer {
                 //     buffer: &uniform_buffer,
@@ -399,7 +398,7 @@ impl Renderer {
                 label: Some("Texture bind group layout"),
                 entries: &[
                     BindGroupLayoutEntry {
-                        binding: 0,
+                        binding: TEXTURE_BINDING_INDEX,
                         visibility: wgpu::ShaderStage::FRAGMENT,
                         ty: wgpu::BindingType::SampledTexture {
                             dimension: wgpu::TextureViewDimension::D2,
@@ -409,7 +408,7 @@ impl Renderer {
                         count: None,
                     },
                     BindGroupLayoutEntry {
-                        binding: 1,
+                        binding: SAMPLER_BINDING_INDEX,
                         visibility: wgpu::ShaderStage::FRAGMENT,
                         // TODO(alex): `comparison` has to do with linear filtering?
                         ty: wgpu::BindingType::Sampler { comparison: false },
@@ -438,11 +437,11 @@ impl Renderer {
             layout: &texture_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
-                    binding: 0,
+                    binding: TEXTURE_BINDING_INDEX,
                     resource: wgpu::BindingResource::TextureView(&texture.view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 1,
+                    binding: SAMPLER_BINDING_INDEX,
                     resource: wgpu::BindingResource::Sampler(&texture.sampler),
                 },
             ],
@@ -468,7 +467,7 @@ impl Renderer {
                     } else {
                         glam::Quat::from_axis_angle(
                             position.clone().normalize(),
-                            f32::to_radians(45.0),
+                            f32::to_radians(15.0),
                         )
                     };
 
@@ -491,9 +490,13 @@ impl Renderer {
 
         let staging_belt = wgpu::util::StagingBelt::new(1024);
 
-        // let path = std::path::Path::new("./assets/kitten.gltf");
+        // TODO(alex): `ship_light.gltf` uses `u8` for some primitives and `u16` for others
+        // in the index buffer, we're not handling this usage yet, so it fails.
+        // To handle this I'll need to create the buffer layout a bit more dynamically, based on
+        // the data the model has.
+        // let path = std::path::Path::new("./assets/ship_light.gltf");
         let path = std::path::Path::new("./assets/scene.gltf");
-        let geometry = load_geometry(path);
+        let model = load_model(path, &device);
 
         // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
         // so it makes sense to handle every kind of possible `VertexBufferDescriptor` during
@@ -501,34 +504,6 @@ impl Renderer {
         // out of here into a more clean `Pipeline` struct, but I guess that's about it.
         let hello_vs = wgpu::include_spirv!("./shaders/hello.vert.spv");
         let hello_fs = wgpu::include_spirv!("./shaders/hello.frag.spv");
-
-        /*
-        let size_of_vec3 = core::mem::size_of::<[f32; 3]>();
-        let size_of_vec2 = core::mem::size_of::<[f32; 2]>();
-        let size_of_buffer = size_of_vec3 + size_of_vec2;
-        let vertex_buffer_size = size_of_buffer as wgpu::BufferAddress;
-        let vertex_buffer_descriptor = wgpu::VertexBufferDescriptor {
-            stride: vertex_buffer_size,
-            step_mode: wgpu::InputStepMode::Vertex,
-            // attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3],
-            attributes: &[
-                wgpu::VertexAttributeDescriptor {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float3,
-                },
-                wgpu::VertexAttributeDescriptor {
-                    // FIXME(alex): VkPhysicalDeviceLimits::maxVertexInputAttributeOffset (2047)
-                    // Can't do this for the offset, we need to interleave the vertex buffer with
-                    // vertices->texture->vertices->texture.
-                    // The buffer in glTF is probably structured this way?
-                    offset: geometry.positions.len() as u64,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float2,
-                },
-            ],
-        };
-        */
 
         // NOTE(alex): The pipeline holds the buffer descriptors, it has to understand what kind of
         // data will be passed to the shaders, so the descriptors must be created before the
@@ -542,35 +517,6 @@ impl Renderer {
         // the pipeline requires buffer descriptors (for each kind of buffer), but it doesn't hold
         // the buffers themselves, that's why you can create and fill these buffers anywhere
         // (before they're used, of course).
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            // contents: bytemuck::cast_slice(&world.vertices),
-            // contents: &positions,
-            contents: &geometry.positions,
-            // NOTE(alex): `usage: COPY_DST` is related to the staging buffers idea. This means that
-            // this buffer will be used as the destination for some data.
-            // The kind of buffer must also be specified, so you need the `VERTEX` usage here.
-            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            // contents: bytemuck::cast_slice(&world.indices),
-            // contents: &indices,
-            contents: &geometry.indices,
-            // NOTE(alex): We don't need `COPY_DST` here because this buffer won't be changing
-            // value, if we think about these indices as being 1 geometric figure, they'll remain
-            // the same, unless you wanted to quickly change it from a rectangle to some other
-            // polygon.
-            // Right now I don't see why you would need this, as when I think about 3D models,
-            // they're not supposed to be deformed in this way, what we could do is apply
-            // transformations to the vertices themselves, but the indices stay constant.
-            usage: wgpu::BufferUsage::INDEX,
-        });
-        let texture_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Texture Buffer"),
-            contents: &geometry.texture_coordinates,
-            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
-        });
 
         let depth_texture = Texture::create_depth_texture(&device, &swap_chain_descriptor);
 
@@ -580,11 +526,11 @@ impl Renderer {
             &swap_chain_descriptor,
             hello_vs,
             hello_fs,
-            // &[&uniform_bind_group_layout, &texture_bind_group_layout],
-            &[&uniform_bind_group_layout],
+            &[&uniform_bind_group_layout, &texture_bind_group_layout],
+            // &[&uniform_bind_group_layout],
             &[
                 Vertex::DESCRIPTOR,
-                // Texture::DESCRIPTOR,
+                Texture::DESCRIPTOR,
                 Instance::DESCRIPTOR,
             ],
             // &[vertex_buffer_descriptor, Instance::DESCRIPTOR],
@@ -598,10 +544,8 @@ impl Renderer {
         // .unwrap();
         // let glyph_brush = GlyphBrushBuilder::using_font(font).build(&device, render_format);
 
-        let vertex_buffers = vec![vertex_buffer, texture_buffer];
-        let index_buffers = vec![index_buffer];
-        // let bind_groups = vec![uniform_bind_group, texture_bind_group];
-        let bind_groups = vec![uniform_bind_group];
+        let bind_groups = vec![uniform_bind_group, texture_bind_group];
+        // let bind_groups = vec![uniform_bind_group];
 
         Self {
             surface,
@@ -610,8 +554,6 @@ impl Renderer {
             swap_chain_descriptor,
             swap_chain,
             render_pipelines,
-            vertex_buffers,
-            index_buffers,
             uniform_buffer,
             bind_groups,
             // glyph_brush,
@@ -620,10 +562,10 @@ impl Renderer {
             instances,
             instance_buffer,
             depth_texture,
-            positions: geometry.positions,
+            model,
             // NOTE(alex): When dealing with buffers directly, we want to pass the number of index
             // elements, not the length of the buffer itself.
-            num_indices: geometry.indices_count as usize,
+            // num_indices: geometry.indices_count as usize,
         }
     }
 
@@ -717,18 +659,23 @@ impl Renderer {
         // - instance buffer objects;
         // TODO(alex): Take a look in renderdoc to see how this instance buffer is handled in the
         // shaders.
-        self.instances.get_mut(0).unwrap().position.x += world.offset.x;
-        self.instances.get_mut(0).unwrap().position.y += world.offset.x;
-        self.instances.get_mut(5).unwrap().position.x += world.offset.x;
-        self.instances.get_mut(5).unwrap().position.y += world.offset.x;
-        self.instances.get_mut(10).unwrap().position.x += world.offset.x;
-        self.instances.get_mut(10).unwrap().position.y += world.offset.x;
-        self.instances.get_mut(16).unwrap().position.x += world.offset.x;
-        self.instances.get_mut(16).unwrap().position.y += world.offset.x;
-        self.instances.get_mut(22).unwrap().position.x += world.offset.x;
-        self.instances.get_mut(22).unwrap().position.y += world.offset.x;
-        self.instances.get_mut(24).unwrap().position.x += world.offset.x;
-        self.instances.get_mut(24).unwrap().position.y += world.offset.x;
+        for instance in self.instances.iter_mut() {
+            instance.position.x += world.offset.x;
+            instance.position.y += world.offset.y;
+            instance.position.z += world.offset.x;
+        }
+        // self.instances.get_mut(0).unwrap().position.x += world.offset.x;
+        // self.instances.get_mut(0).unwrap().position.y += world.offset.y;
+        // self.instances.get_mut(5).unwrap().position.x += world.offset.x;
+        // self.instances.get_mut(5).unwrap().position.y += world.offset.y;
+        // self.instances.get_mut(10).unwrap().position.x += world.offset.x;
+        // self.instances.get_mut(10).unwrap().position.y += world.offset.y;
+        // self.instances.get_mut(16).unwrap().position.x += world.offset.x;
+        // self.instances.get_mut(16).unwrap().position.y += world.offset.y;
+        // self.instances.get_mut(22).unwrap().position.x += world.offset.x;
+        // self.instances.get_mut(22).unwrap().position.y += world.offset.y;
+        // self.instances.get_mut(24).unwrap().position.x += world.offset.x;
+        // self.instances.get_mut(24).unwrap().position.y += world.offset.y;
         let instance_data = self
             .instances
             .iter()
@@ -783,46 +730,68 @@ impl Renderer {
                             ),
                         });
 
+                    first_render_pass.push_debug_group("Prepare data for draw.");
+                    first_render_pass.push_debug_group("Set pipeline");
                     first_render_pass.set_pipeline(&self.render_pipelines.first().unwrap());
+                    first_render_pass.pop_debug_group();
 
-                    // NOTE(alex): 3D Model index buffer.
-                    first_render_pass
-                        .set_index_buffer(self.index_buffers.first().unwrap().slice(..));
+                    // NOTE(alex): Uniform bind group (camera).
+                    first_render_pass.push_debug_group("Set uniform bind group");
+                    first_render_pass.set_bind_group(0, self.bind_groups.get(0).unwrap(), &[]);
+                    first_render_pass.pop_debug_group();
 
-                    for (i, bind_group) in self.bind_groups.iter().enumerate() {
-                        // NOTE(alex): The bind group index must match the `set` value in the
-                        // shader, so:
-                        // `layout(set = 0, ...)`
-                        // Requires:
-                        // `set_bind_group(0, ...)`.
-                        first_render_pass.set_bind_group(i as u32, bind_group, &[]);
-                    }
-
-                    // NOTE(alex): 3D Model vertex buffer (and related).
-                    first_render_pass
-                        .set_vertex_buffer(0, self.vertex_buffers.get(0).unwrap().slice(..));
-
+                    // NOTE(alex): Texture bind group (texture).
+                    first_render_pass.push_debug_group("Set texture bind group");
+                    first_render_pass.set_bind_group(1, self.bind_groups.get(1).unwrap(), &[]);
+                    first_render_pass.pop_debug_group();
+                    // for (i, bind_group) in self.bind_groups.iter().enumerate() {
+                    //     // NOTE(alex): The bind group index must match the `set` value in the
+                    //     // shader, so:
+                    //     // `layout(set = 0, ...)`
+                    //     // Requires:
+                    //     // `set_bind_group(0, ...)`.
+                    //     first_render_pass.set_bind_group(i as u32, bind_group, &[]);
+                    // }
+                    first_render_pass.push_debug_group("Set instances vertex buffer");
                     first_render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-                    first_render_pass
-                        .set_vertex_buffer(2, self.vertex_buffers.get(1).unwrap().slice(..));
+                    first_render_pass.pop_debug_group();
 
-                    // NOTE(alex): wgpu API takes advantage of ranges to specify the offset
-                    // into the vertex buffer. `0..len()` means that the `gl_VertexIndex`
-                    // starts at `0`.
-                    // `instances` range is the same, but for the `gl_InstanceIndex` used in
-                    // instanced rendering.
-                    // In vulkan, this function call would look like `(0, 0)`.
-                    // first_render_pass.draw(0..world.vertices.len() as u32, 0..1);
-                    first_render_pass.draw_indexed(
-                        // 0..world.indices.len() as u32,
-                        // 0..self.indices as u32,
-                        0..self.num_indices as u32,
-                        0,
-                        // NOTE(alex): The main advantage of having this be a `Range<u32>` over
-                        // just a number, is that with ranges it becomes possible to skip/select
-                        // which instances to draw (how many copies).
-                        0..self.instances.len() as _,
-                    );
+                    for (index, mesh) in self.model.meshes.iter().enumerate() {
+                        // NOTE(alex): 3D Model index buffer.
+                        first_render_pass.push_debug_group("Set index buffer");
+                        first_render_pass.set_index_buffer(mesh.indices.slice(..));
+                        first_render_pass.pop_debug_group();
+
+                        // NOTE(alex): 3D Model vertex buffer (and related).
+                        first_render_pass.push_debug_group("Set positions vertex buffer");
+                        first_render_pass.set_vertex_buffer(0, mesh.positions.slice(..));
+                        first_render_pass.pop_debug_group();
+
+                        // NOTE(alex): 3D Model texture vertex buffer (and related).
+                        first_render_pass.push_debug_group("Set texture vertex buffer");
+                        first_render_pass.set_vertex_buffer(2, mesh.texture_coordinates.slice(..));
+                        first_render_pass.pop_debug_group();
+
+                        // NOTE(alex): wgpu API takes advantage of ranges to specify the offset
+                        // into the vertex buffer. `0..len()` means that the `gl_VertexIndex`
+                        // starts at `0`.
+                        // `instances` range is the same, but for the `gl_InstanceIndex` used in
+                        // instanced rendering.
+                        // In vulkan, this function call would look like `(0, 0)`.
+                        // first_render_pass.draw(0..world.vertices.len() as u32, 0..1);
+                        first_render_pass.draw_indexed(
+                            // 0..world.indices.len() as u32,
+                            // 0..self.indices as u32,
+                            0..mesh.indices_count as u32,
+                            0,
+                            // NOTE(alex): The main advantage of having this be a `Range<u32>` over
+                            // just a number, is that with ranges it becomes possible to skip/select
+                            // which instances to draw (how many copies).
+                            0..self.instances.len() as _,
+                        );
+                        info!("Done drawing {:?}", index);
+                        first_render_pass.pop_debug_group();
+                    }
                 }
 
                 self.staging_belt.finish();
