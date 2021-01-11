@@ -1,6 +1,5 @@
 use log::info;
 use std::{
-    collections::HashMap,
     f32::consts::{FRAC_PI_2, PI},
     path,
     time::Instant,
@@ -26,7 +25,6 @@ pub(crate) mod world;
 
 use camera::{Camera, Projection};
 use renderer::Uniforms;
-use vertex::cube;
 
 // NOTE(alex): Shader locations:
 pub const TEXTURE_SHADER_LOCATION: wgpu::ShaderLocation = 1;
@@ -321,30 +319,19 @@ fn main() {
         .unwrap();
 
     let mut world = World {
-        // NOTE(alex): Position is done in counter-clockwise fashion, starting from the middle point
-        // in this case.
-        // debug_vertices,
-        // NOTE(alex): These indices will work from:
-        // middle->left->right (implicit back to middle);
-        // middle->right->up left (implicit back to middle);
-        // debug_indices: indices,
         camera: Camera {
-            // eye: (0.0, 1.0, 2.0).into(),
-            // target: (0.0, 0.0, 0.0).into(),
-            // up: glam::Vec3::unit_y(),
-            // aspect_ratio: window.inner_size().width as f32 / window.inner_size().height as f32,
-            // fov_y: 45.0,
-            // z_near: 0.1,
-            // z_far: 100.0,
             position: glam::const_vec3!([0.0, 5.0, 10.0]),
             // NOTE(alex): Yaw "rotates" around the Y-axis, positive rotates the right hand to the
             // right (meaning the thumb points away from the nose), negative rotates the thumb
             // towards your nose (-90 degrees makes your thumb point to your nose, the Z-axis
             // points left).
+            // NOTE(alex): `cos(-90) = 0`, we're looking at `origin.x = 0`.
+            // NOTE(alex): `sin(-90) = -1`, we're flipping `z` looking at `origin.z = -1`.
             yaw: f32::to_radians(-90.0),
             // NOTE(alex): Pitch "rotates" around the X-axis, positive rotates the right hand
             // downwards (index points towards your nose) with the Z-axis pointing down, negative
             // the index points away from your nose, with the Z-axis pointing upwards.
+            // NOTE(alex): `sin(-20) = -0.34`, we're looking downwards `origin.y = -0.34`.
             pitch: f32::to_radians(-20.0),
         },
         projection: Projection {

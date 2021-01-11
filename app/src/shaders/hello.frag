@@ -14,12 +14,8 @@ layout(set = 1, binding = 2) uniform sampler texture_sampler;
 
 void main() {
     vec4 textured_color = texture(sampler2D(texture_2d, texture_sampler), texture_coordinates);
-    // out_color = color;
     out_color = textured_color;
-    // out_color = textured_color * color;
-    // out_color = vec4(0.5);
 
-    // out_color = vec4(0.0 + offset.x, 0.0 + offset.y, 1.0, 1.0);
     // NOTE(alex): Moving a model around can be done in many ways:
     // - uniform buffer objects (not a good solution);
     // - instance buffer objects;

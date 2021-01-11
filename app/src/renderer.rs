@@ -3,7 +3,6 @@ use std::{char::UNICODE_VERSION, iter};
 use bytemuck::{Pod, Zeroable};
 use futures::{task, task::LocalSpawnExt};
 use glam::swizzles::*;
-use gltf::Buffer;
 use log::info;
 use wgpu::{util::DeviceExt, BindGroupLayoutEntry};
 use wgpu_glyph::ab_glyph;
@@ -21,34 +20,31 @@ use crate::{
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone, Pod, Zeroable)]
 pub struct Uniforms {
-    pub view_position: glam::Vec4,
-    pub view_projection: glam::Mat4,
+    pub view: glam::Mat4,
+    pub projection: glam::Mat4,
 }
-
-// unsafe impl Zeroable for Uniforms {}
-// unsafe impl Pod for Uniforms {}
 
 impl Uniforms {
     pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<Self>() as wgpu::BufferAddress;
 
     pub fn update_view_projection(&mut self, camera: &Camera, projection: &Projection) {
-        self.view_position =
-            glam::Vec4::new(camera.position.x, camera.position.y, camera.position.z, 1.0);
-        self.view_projection = projection.perspective() * camera.view_matrix();
+        self.view = camera.view();
+        self.projection = projection.perspective();
     }
 }
 
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone, Pod, Zeroable)]
-pub struct Instance {
+pub struct Transform {
     position: glam::Vec4,
+    scale: glam::Vec4,
     rotation: glam::Quat,
 }
 
-impl Instance {
+impl Transform {
     pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<glam::Mat4>() as wgpu::BufferAddress;
     /// This descriptor is a bit on the long side because we're doing a sort of manual conversion
-    /// into shader `mat4` type, if you red this as being [Vec4; 4] it becomes clearer that this
+    /// into shader `mat4` type, if you read this as being [Vec4; 4] it becomes clearer that this
     /// is a 4x4 matrix. Is there a simpler way of doing this? As it stands, having to specify
     /// each `shader_location` is error prone, and incovenient.
     ///
@@ -82,7 +78,7 @@ impl Instance {
         ],
     };
 
-    pub fn model_matrix(&self) -> glam::Mat4 {
+    pub fn model(&self) -> glam::Mat4 {
         glam::Mat4::from_scale_rotation_translation(
             glam::const_vec3!([0.5, 0.5, 0.5]),
             self.rotation,
@@ -91,8 +87,7 @@ impl Instance {
     }
 }
 
-// FIXME(alex): The first model renders fine, but the second is stretched and messed up.
-const NUM_INSTANCES_PER_ROW: u32 = 5;
+const NUM_TRANSFORMS_PER_ROW: u32 = 5;
 /// TODO(alex): There needs to be a separation between things here and an actual `Pipeline`.
 /// As it stands, `Renderer::new()` will create a pipeline with very specific details, that
 /// can't be easily changed (I could set them in the `renderer` instance, but not a good solution),
@@ -189,7 +184,8 @@ pub struct Renderer {
     /// Thinking ahead, we could have a `HashMap<String, Instance>` of instances and have an object
     /// be rendered as "Aunt May", and another be "Mary Jane", sharing the vertex buffer object
     /// (a woman's body), but having a hair color transformation.
-    instances: Vec<Instance>,
+    // instances: Vec<Instance>,
+    transforms: Vec<Transform>,
     instance_buffer: wgpu::Buffer,
     depth_texture: Texture,
     model: Model,
@@ -339,6 +335,9 @@ impl Renderer {
         };
         let swap_chain = device.create_swap_chain(&surface, &swap_chain_descriptor);
 
+        // NOTE(alex): This is the camera uniform group (view, projection matrices).
+        // NOTE(alex): The uniform descriptor doesn't require an `offset` value to tell the shaders
+        // the size of individual pieces of data (unlike a vertex buffer).
         let uniform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Bind group for uniforms (shader globals)"),
@@ -376,11 +375,6 @@ impl Renderer {
             entries: &[wgpu::BindGroupEntry {
                 binding: UNIFORM_BINDING_INDEX,
                 resource: wgpu::BindingResource::Buffer(uniform_buffer.slice(..)),
-                // resource: wgpu::BindingResource::Buffer {
-                //     buffer: &uniform_buffer,
-                //     offset: 0,
-                //     size: None,
-                // },
             }],
         });
 
@@ -453,11 +447,11 @@ impl Renderer {
         // - use it in the shader;
         // A good chunk of the code here is just about changing where each copy goes.
         const SPACE_BETWEEN: f32 = 5.0;
-        let instances = (0..NUM_INSTANCES_PER_ROW)
+        let transforms = (0..NUM_TRANSFORMS_PER_ROW)
             .flat_map(|z| {
-                (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                    let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
-                    let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+                (0..NUM_TRANSFORMS_PER_ROW).map(move |x| {
+                    let x = SPACE_BETWEEN * (x as f32 - NUM_TRANSFORMS_PER_ROW as f32 / 2.0);
+                    let z = SPACE_BETWEEN * (z as f32 - NUM_TRANSFORMS_PER_ROW as f32 / 2.0);
 
                     let position: glam::Vec3 = glam::Vec3::new(x as f32, 0.0, z as f32);
 
@@ -471,20 +465,20 @@ impl Renderer {
                         )
                     };
 
-                    Instance {
+                    Transform {
                         position: glam::Vec4::new(position.x, position.y, position.z, 1.0),
+                        scale: glam::Vec4::one(),
                         rotation,
                     }
                 })
             })
             .collect::<Vec<_>>();
-        let instance_data = instances
-            .iter()
-            .map(Instance::model_matrix)
-            .collect::<Vec<_>>();
+
+        let transform_data = transforms.iter().map(Transform::model).collect::<Vec<_>>();
+
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance buffer"),
-            contents: bytemuck::cast_slice(&instance_data),
+            contents: bytemuck::cast_slice(&transform_data),
             usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
         });
 
@@ -494,8 +488,15 @@ impl Renderer {
         // in the index buffer, we're not handling this usage yet, so it fails.
         // To handle this I'll need to create the buffer layout a bit more dynamically, based on
         // the data the model has.
+        // FIXME(alex): Rendering the ship doesn't work, there is a buffer with limit of `146`, but
+        // we're trying to write `288` bytes into it. This happens with `Uint16` which is correctly
+        // setup.
+        // Researching this problem, it's related to writing the data into the wrong buffer (again),
+        // but where? The `scene.gltf` renders nicely. Read the TODO above for more info.
         // let path = std::path::Path::new("./assets/ship_light.gltf");
         let path = std::path::Path::new("./assets/scene.gltf");
+        // FIXME(alex): Can't render kitten yet because we're `unwrap`ping the texture option.
+        // let path = std::path::Path::new("./assets/kitten.gltf");
         let model = load_model(path, &device);
 
         // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
@@ -528,12 +529,18 @@ impl Renderer {
             hello_fs,
             &[&uniform_bind_group_layout, &texture_bind_group_layout],
             // &[&uniform_bind_group_layout],
+            // NOTE(alex): Our `model` problem that distorted the model (and only happenend when we
+            // included the texture coordinates mechanism) was related to this warning. I was
+            // indexing the slots incorrectly.
+            // WARNING(alex): The ordering here is **HIGHLY** important!
+            // When `set_vertex_buffer` is called, the `slot` parameter is the index order of this,
+            // so if we want to set the `positions` then `slot = 0`, `texture_coordinates` are
+            // `slot = 1` and `instances` (`transforms`) `slot = 2`.
             &[
                 Vertex::DESCRIPTOR,
                 Texture::DESCRIPTOR,
-                Instance::DESCRIPTOR,
+                Transform::DESCRIPTOR,
             ],
-            // &[vertex_buffer_descriptor, Instance::DESCRIPTOR],
         );
 
         let render_pipelines = vec![hello_render_pipeline];
@@ -559,13 +566,12 @@ impl Renderer {
             // glyph_brush,
             staging_belt,
             size: window_size,
-            instances,
+            transforms,
             instance_buffer,
             depth_texture,
             model,
             // NOTE(alex): When dealing with buffers directly, we want to pass the number of index
             // elements, not the length of the buffer itself.
-            // num_indices: geometry.indices_count as usize,
         }
     }
 
@@ -657,39 +663,29 @@ impl Renderer {
         // NOTE(alex): Moving a model around can be done in many ways:
         // - uniform buffer objects (not a good solution);
         // - instance buffer objects;
-        // TODO(alex): Take a look in renderdoc to see how this instance buffer is handled in the
-        // shaders.
-        for instance in self.instances.iter_mut() {
-            instance.position.x += world.offset.x;
-            instance.position.y += world.offset.y;
-            instance.position.z += world.offset.x;
+        // TODO(alex): Remove this debug circling.
+        for (index, transform) in self.transforms.iter_mut().enumerate() {
+            if index % 4 == 0 {
+                transform.position.x += world.offset.x;
+                transform.position.y += world.offset.y;
+                transform.position.z += world.offset.x;
+            }
         }
-        // self.instances.get_mut(0).unwrap().position.x += world.offset.x;
-        // self.instances.get_mut(0).unwrap().position.y += world.offset.y;
-        // self.instances.get_mut(5).unwrap().position.x += world.offset.x;
-        // self.instances.get_mut(5).unwrap().position.y += world.offset.y;
-        // self.instances.get_mut(10).unwrap().position.x += world.offset.x;
-        // self.instances.get_mut(10).unwrap().position.y += world.offset.y;
-        // self.instances.get_mut(16).unwrap().position.x += world.offset.x;
-        // self.instances.get_mut(16).unwrap().position.y += world.offset.y;
-        // self.instances.get_mut(22).unwrap().position.x += world.offset.x;
-        // self.instances.get_mut(22).unwrap().position.y += world.offset.y;
-        // self.instances.get_mut(24).unwrap().position.x += world.offset.x;
-        // self.instances.get_mut(24).unwrap().position.y += world.offset.y;
-        let instance_data = self
-            .instances
+
+        let transform_data = self
+            .transforms
             .iter()
-            .map(Instance::model_matrix)
+            .map(Transform::model)
             .collect::<Vec<_>>();
         self.staging_belt
             .write_buffer(
                 &mut encoder,
                 &self.instance_buffer,
                 0,
-                wgpu::BufferSize::new(Instance::SIZE * instance_data.len() as u64).unwrap(),
+                wgpu::BufferSize::new(Transform::SIZE * transform_data.len() as u64).unwrap(),
                 &self.device,
             )
-            .copy_from_slice(bytemuck::cast_slice(&instance_data));
+            .copy_from_slice(bytemuck::cast_slice(&transform_data));
 
         let _render_result = self
             .swap_chain
@@ -745,15 +741,15 @@ impl Renderer {
                     first_render_pass.set_bind_group(1, self.bind_groups.get(1).unwrap(), &[]);
                     first_render_pass.pop_debug_group();
                     // for (i, bind_group) in self.bind_groups.iter().enumerate() {
-                    //     // NOTE(alex): The bind group index must match the `set` value in the
-                    //     // shader, so:
-                    //     // `layout(set = 0, ...)`
-                    //     // Requires:
-                    //     // `set_bind_group(0, ...)`.
+                    // NOTE(alex): The bind group index must match the `set` value in the
+                    // shader, so:
+                    // `layout(set = 0, ...)`
+                    // Requires:
+                    // `set_bind_group(0, ...)`.
                     //     first_render_pass.set_bind_group(i as u32, bind_group, &[]);
                     // }
                     first_render_pass.push_debug_group("Set instances vertex buffer");
-                    first_render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+                    first_render_pass.set_vertex_buffer(2, self.instance_buffer.slice(..));
                     first_render_pass.pop_debug_group();
 
                     for (index, mesh) in self.model.meshes.iter().enumerate() {
@@ -769,7 +765,7 @@ impl Renderer {
 
                         // NOTE(alex): 3D Model texture vertex buffer (and related).
                         first_render_pass.push_debug_group("Set texture vertex buffer");
-                        first_render_pass.set_vertex_buffer(2, mesh.texture_coordinates.slice(..));
+                        first_render_pass.set_vertex_buffer(1, mesh.texture_coordinates.slice(..));
                         first_render_pass.pop_debug_group();
 
                         // NOTE(alex): wgpu API takes advantage of ranges to specify the offset
@@ -780,16 +776,13 @@ impl Renderer {
                         // In vulkan, this function call would look like `(0, 0)`.
                         // first_render_pass.draw(0..world.vertices.len() as u32, 0..1);
                         first_render_pass.draw_indexed(
-                            // 0..world.indices.len() as u32,
-                            // 0..self.indices as u32,
                             0..mesh.indices_count as u32,
                             0,
                             // NOTE(alex): The main advantage of having this be a `Range<u32>` over
                             // just a number, is that with ranges it becomes possible to skip/select
                             // which instances to draw (how many copies).
-                            0..self.instances.len() as _,
+                            0..self.transforms.len() as _,
                         );
-                        info!("Done drawing {:?}", index);
                         first_render_pass.pop_debug_group();
                     }
                 }

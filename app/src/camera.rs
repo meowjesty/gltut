@@ -21,15 +21,9 @@ impl Projection {
     }
 }
 
+/// http://www.opengl-tutorial.org/beginners-tutorials/tutorial-3-matrices/
 #[derive(Debug, Default)]
 pub struct Camera {
-    // pub eye: glam::Vec3,
-    // target: glam::Vec3,
-    // up: glam::Vec3,
-    // aspect_ratio: f32,
-    // fov_y: f32,
-    // z_near: f32,
-    // z_far: f32,
     /// X-axis moves the thumb towards the scren +;
     /// Y-axis moves the index towards the screen +;
     /// Z-axis moves the hand towards your nose +;
@@ -55,7 +49,9 @@ pub fn look_at_dir(eye: glam::Vec3, dir: glam::Vec3, up: glam::Vec3) -> glam::Ma
 }
 
 impl Camera {
-    pub fn view_matrix(&self) -> glam::Mat4 {
+    // NOTE(alex): This link gives a clearer explanation of how this works.
+    /// https://stackoverflow.com/questions/21830340/understanding-glmlookat
+    pub fn view(&self) -> glam::Mat4 {
         // NOTE(alex): glam doesn't have a public version of look at direction
         // (`cgmath::loot_at_dir), that's why it was rotating around the center point, as this
         // `glam::look_at_rh` looks at the center (locks the center, not a direction).
@@ -63,26 +59,12 @@ impl Camera {
         // by using look_at_rh formula with the correct center (check the math)?
         // TODO(alex): We don't need the `OPENGL_TO_WGPU_MATRIX`, things still look okay so far
         // without it.
-        let view_matrix = look_at_dir(
-            self.position,
-            glam::Vec3::new(self.yaw.cos(), self.pitch.sin(), self.yaw.sin()).normalize(),
-            glam::Vec3::unit_y(),
-        );
+        let center = glam::Vec3::new(self.yaw.cos(), self.pitch.sin(), self.yaw.sin()).normalize();
+        let view_matrix =
+            glam::Mat4::look_at_rh(self.position, self.position + center, glam::Vec3::unit_y());
 
         view_matrix
     }
-
-    // pub fn view_projection_matrix(&self) -> glam::Mat4 {
-    //     let view = glam::Mat4::look_at_rh(self.eye, self.target, self.up);
-    //     let projection = glam::Mat4::perspective_rh(
-    //         self.fov_y.to_radians(),
-    //         self.aspect_ratio,
-    //         self.z_near,
-    //         self.z_far,
-    //     );
-
-    //     projection * view
-    // }
 }
 
 // #[rustfmt::skip]

@@ -19,9 +19,6 @@ pub struct Vertex {
 //     const fn size_of() -> usize;
 // }
 
-pub const VEC2_SIZE: usize = size_of::<glam::Vec2>();
-pub const VEC3_SIZE: usize = size_of::<glam::Vec3>();
-
 impl Vertex {
     // pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<Self>() as wgpu::BufferAddress;
     pub const SIZE: wgpu::BufferAddress = size_of::<[f32; 3]>() as wgpu::BufferAddress;

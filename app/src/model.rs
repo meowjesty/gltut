@@ -7,6 +7,9 @@ pub(crate) struct Model {
     pub(crate) meshes: Vec<Mesh>,
 }
 
+/// TODO(alex): Some of these fields are optional (or might be sets, instead of single elements).
+/// This breaks the `kitten.gltf` model, as it doesn't have `TEXCOORD_0` nor related buffer.
+/// Some models may have additional `TEXCOORD_1`, `TEXCOORD_2`.
 #[derive(Debug)]
 pub(crate) struct Mesh {
     pub(crate) positions: wgpu::Buffer,
@@ -53,6 +56,7 @@ pub(crate) struct Mesh {
 /// be neccessary if we wanted to render the whole scene as it's described in the glTF file.
 /// I'm not interested in this right now, but it doesn't affect us in any way to **keep things as
 /// they are**.
+// TODO(alex): Load the model texture (`textures` folder for `scene.gltf`).
 pub(crate) fn load_model<'x>(path: &path::Path, device: &wgpu::Device) -> Model {
     use core::mem::*;
     let (document, buffers, _images) = gltf::import(path).expect("Could not open gltf file.");
@@ -84,13 +88,8 @@ pub(crate) fn load_model<'x>(path: &path::Path, device: &wgpu::Device) -> Model 
     // let mut positions = Vec::with_capacity(4);
     // let mut counts = Vec::with_capacity(4);
     // let mut texture_coordinates = Vec::with_capacity(4);
-    let mut num_primitives = 0;
-    use std::fs::*;
-    use std::io::prelude::*;
     use wgpu::util::{BufferInitDescriptor, DeviceExt};
-    let mut debug_file = File::create("debug_file.json").unwrap();
-    let mut num_positions = 0;
-    let mut num_texture_coordinates = 0;
+
     // for scene in document.scenes() {
     // for node in scene.nodes() {
     // if let Some(mesh) = node.mesh() {
@@ -164,6 +163,7 @@ pub(crate) fn load_model<'x>(path: &path::Path, device: &wgpu::Device) -> Model 
                     gltf::accessor::Dimensions::Mat4 => data_size * 4 * 4,
                 };
                 let count = accessor.count();
+                // FIXME(alex): This doesn't always agree with the actual length of the buffer.
                 let length = size_bytes * count;
                 let view = accessor.view().unwrap();
                 let byte_offset = view.offset();
@@ -187,7 +187,6 @@ pub(crate) fn load_model<'x>(path: &path::Path, device: &wgpu::Device) -> Model 
 
                 match semantic {
                     gltf::Semantic::Positions => {
-                        // positions_buf = Some(positions_buffer.to_vec())
                         info!("attributes -> {:?}", semantic);
                         info!(
                             "count {:?}, bufferView {:?}, byteLength {:?}, byteOffset {:?}",
@@ -198,7 +197,6 @@ pub(crate) fn load_model<'x>(path: &path::Path, device: &wgpu::Device) -> Model 
                         );
                         info!("attributes -> buffer len {:?}", attributes.len());
                         positions = Some(attributes_buffer);
-                        num_positions += 1;
                     }
                     gltf::Semantic::TexCoords(set_index) => {
                         info!("attributes -> {:?}", semantic);
@@ -211,12 +209,9 @@ pub(crate) fn load_model<'x>(path: &path::Path, device: &wgpu::Device) -> Model 
                         );
                         info!("attributes -> buffer len {:?}", attributes.len());
                         texture_coordinates = Some(attributes_buffer);
-                        num_texture_coordinates += 1;
                     }
                     _ => (),
                 }
-
-                num_primitives += 1;
             }
         }
 
@@ -229,11 +224,6 @@ pub(crate) fn load_model<'x>(path: &path::Path, device: &wgpu::Device) -> Model 
     }
     // }
     // }
-    // TODO(alex): We're getting correct values for indexing, count.
-    // `positions view 2 accessor 0 buffer 0`
-    // `textures view 1 accessor 3 buffer 0`
-    // `positions count 4656 -> textures_count 4656`
-
     let model = Model { meshes };
 
     model
