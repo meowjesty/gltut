@@ -35,14 +35,16 @@ impl Uniforms {
 
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone, Pod, Zeroable)]
-pub struct Transform {
-    position: glam::Vec4,
-    scale: glam::Vec4,
-    rotation: glam::Quat,
+pub struct Instance {
+    transform: Transform,
 }
 
-impl Transform {
+impl Instance {
+    /// TODO(alex): Is there a way to setup this size + description and rely on `Self`, instead of
+    /// doing the manual size calulation? If we were to add, say a `Vec3` to instance, we would
+    /// have to `size_of::<Mat4 + Vec3>()`, is there a better way?
     pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<glam::Mat4>() as wgpu::BufferAddress;
+
     /// This descriptor is a bit on the long side because we're doing a sort of manual conversion
     /// into shader `mat4` type, if you read this as being [Vec4; 4] it becomes clearer that this
     /// is a 4x4 matrix. Is there a simpler way of doing this? As it stands, having to specify
@@ -77,7 +79,18 @@ impl Transform {
             },
         ],
     };
+}
 
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone, Pod, Zeroable)]
+pub struct Transform {
+    position: glam::Vec4,
+    scale: glam::Vec4,
+    rotation: glam::Quat,
+}
+
+impl Transform {
+    /// TODO(alex): We could move this function to `Instance`.
     pub fn model(&self) -> glam::Mat4 {
         glam::Mat4::from_scale_rotation_translation(
             glam::const_vec3!([0.5, 0.5, 0.5]),
@@ -87,7 +100,7 @@ impl Transform {
     }
 }
 
-const NUM_TRANSFORMS_PER_ROW: u32 = 5;
+const NUM_INSTANCES_PER_ROW: u32 = 5;
 /// TODO(alex): There needs to be a separation between things here and an actual `Pipeline`.
 /// As it stands, `Renderer::new()` will create a pipeline with very specific details, that
 /// can't be easily changed (I could set them in the `renderer` instance, but not a good solution),
@@ -185,7 +198,7 @@ pub struct Renderer {
     /// be rendered as "Aunt May", and another be "Mary Jane", sharing the vertex buffer object
     /// (a woman's body), but having a hair color transformation.
     // instances: Vec<Instance>,
-    transforms: Vec<Transform>,
+    instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
     depth_texture: Texture,
     model: Model,
@@ -447,11 +460,11 @@ impl Renderer {
         // - use it in the shader;
         // A good chunk of the code here is just about changing where each copy goes.
         const SPACE_BETWEEN: f32 = 5.0;
-        let transforms = (0..NUM_TRANSFORMS_PER_ROW)
+        let instances = (0..NUM_INSTANCES_PER_ROW)
             .flat_map(|z| {
-                (0..NUM_TRANSFORMS_PER_ROW).map(move |x| {
-                    let x = SPACE_BETWEEN * (x as f32 - NUM_TRANSFORMS_PER_ROW as f32 / 2.0);
-                    let z = SPACE_BETWEEN * (z as f32 - NUM_TRANSFORMS_PER_ROW as f32 / 2.0);
+                (0..NUM_INSTANCES_PER_ROW).map(move |x| {
+                    let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+                    let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
 
                     let position: glam::Vec3 = glam::Vec3::new(x as f32, 0.0, z as f32);
 
@@ -465,20 +478,25 @@ impl Renderer {
                         )
                     };
 
-                    Transform {
+                    let transform = Transform {
                         position: glam::Vec4::new(position.x, position.y, position.z, 1.0),
                         scale: glam::Vec4::one(),
                         rotation,
-                    }
+                    };
+
+                    Instance { transform }
                 })
             })
             .collect::<Vec<_>>();
 
-        let transform_data = transforms.iter().map(Transform::model).collect::<Vec<_>>();
+        let instance_data = instances
+            .iter()
+            .map(|instance| instance.transform.model())
+            .collect::<Vec<_>>();
 
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance buffer"),
-            contents: bytemuck::cast_slice(&transform_data),
+            contents: bytemuck::cast_slice(&instance_data),
             usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
         });
 
@@ -543,7 +561,7 @@ impl Renderer {
             &[
                 Vertex::DESCRIPTOR,
                 Texture::DESCRIPTOR,
-                Transform::DESCRIPTOR,
+                Instance::DESCRIPTOR,
             ],
         );
 
@@ -570,7 +588,7 @@ impl Renderer {
             // glyph_brush,
             staging_belt,
             size: window_size,
-            transforms,
+            instances,
             instance_buffer,
             depth_texture,
             model,
@@ -668,28 +686,28 @@ impl Renderer {
         // - uniform buffer objects (not a good solution);
         // - instance buffer objects;
         // TODO(alex): Remove this debug circling.
-        for (index, transform) in self.transforms.iter_mut().enumerate() {
+        for (index, instance) in self.instances.iter_mut().enumerate() {
             if index % 4 == 0 {
-                transform.position.x += world.offset.x;
-                transform.position.y += world.offset.y;
-                transform.position.z += world.offset.x;
+                instance.transform.position.x += world.offset.x;
+                instance.transform.position.y += world.offset.y;
+                instance.transform.position.z += world.offset.x;
             }
         }
 
-        let transform_data = self
-            .transforms
+        let instance_data = self
+            .instances
             .iter()
-            .map(Transform::model)
+            .map(|instance| instance.transform.model())
             .collect::<Vec<_>>();
         self.staging_belt
             .write_buffer(
                 &mut encoder,
                 &self.instance_buffer,
                 0,
-                wgpu::BufferSize::new(Transform::SIZE * transform_data.len() as u64).unwrap(),
+                wgpu::BufferSize::new(Instance::SIZE * instance_data.len() as u64).unwrap(),
                 &self.device,
             )
-            .copy_from_slice(bytemuck::cast_slice(&transform_data));
+            .copy_from_slice(bytemuck::cast_slice(&instance_data));
 
         let _render_result = self
             .swap_chain
@@ -787,7 +805,7 @@ impl Renderer {
                                 // NOTE(alex): The main advantage of having this be a `Range<u32>`
                                 // over just a number, is that with ranges it becomes possible to
                                 // skip/select which instances to draw (how many copies).
-                                0..self.transforms.len() as _,
+                                0..self.instances.len() as _,
                             );
                         }
                         first_render_pass.pop_debug_group();
