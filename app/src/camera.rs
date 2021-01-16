@@ -60,6 +60,7 @@ impl Camera {
         // TODO(alex): We don't need the `OPENGL_TO_WGPU_MATRIX`, things still look okay so far
         // without it.
         let center = glam::Vec3::new(self.yaw.cos(), self.pitch.sin(), self.yaw.sin()).normalize();
+        // NOTE(alex): Center - Eye gives a direction, so this becomes look at direction.
         let view_matrix =
             glam::Mat4::look_at_rh(self.position, self.position + center, glam::Vec3::unit_y());
 

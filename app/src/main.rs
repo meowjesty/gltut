@@ -302,6 +302,24 @@ fn load_model_gltf<'x>() -> HashMap<PrimitiveKind, Vec<Vec<u8>>> {
 fn main() {
     let _logger = setup_logger().unwrap();
 
+    // NOTE(alex): `Future`s are lazy, so they won't do anything until their `poll` method is
+    // called, but this is a bit more involved than just `do_stuff.poll()`:
+    // https://os.phil-opp.com/async-await/#pinning-and-futures
+    // So to make things simpler, we use executors (from the `futures` crate here) that act as a
+    // global holder of futures. They're the ones implementing a `loop` that keeps calling `poll`
+    // on each `Future` (not so stupidly, they're smarter than just `loop`).
+    // The `spawn` method in an executor will handle the `Future`'s creation, `poll`ing and
+    // putting these calls in multiple threads (create a thread pool).
+    //
+    // In short, executors will execute the `Future` operation.
+    //
+    // NOTE(alex): The `Waker` is passed inside the `Context` of the `poll` function, and it's a
+    // facilitator to the whole async ordeal.
+    // Instead of having to constatly call `poll`, the executor will insert this `Waker` in the
+    // `Context` so that the `Waker` can notify whenever the operation is done, so no need to call
+    // `poll` until it receives this notification. This looks similar to how async functions
+    // generally allow you to pass in a callback function, that handles the end state.
+    // https://os.phil-opp.com/async-await/#wakers
     let (mut pool, spawner) = {
         let local_pool = futures::executor::LocalPool::new();
         let spawner = local_pool.spawner();
@@ -400,9 +418,11 @@ fn main() {
                 // TODO(alex): Do the rotation and setup the MVP.
                 // world.camera.model = glam::const_mat4!([1.0; 16]);
                 window.request_redraw();
-                // TODO(alex): Why do we need this pool?
-                // Removing it, the triangle keeps rotating, no valdation errors, everything seems
-                // just fine (added this quite late actually).
+                // NOTE(alex): `Future`s are state machines that end when their inner operation is
+                // finished, and progress is checked on each call to `poll` (the first call
+                // initiates the async lazy operation). This function's purpose is to advance the
+                // multiple tasks in however many futures there are.
+                // It's like we're pushing the operations forward with every call to this.
                 pool.run_until_stalled();
             }
             Event::RedrawRequested { .. } => {

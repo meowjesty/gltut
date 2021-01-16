@@ -488,6 +488,10 @@ impl Renderer {
         // in the index buffer, we're not handling this usage yet, so it fails.
         // To handle this I'll need to create the buffer layout a bit more dynamically, based on
         // the data the model has.
+        // ADD(alex): This will prove to be a bit more difficult, as wgpu only supports `u16` and
+        // `u32` for index formats. To load this model we would have to either convert it
+        // in the file, or do some manual indexing (which we were doing before when looping trough
+        // the whole scene). Too much hassle right now, but might revisit this later.
         // FIXME(alex): Rendering the ship doesn't work, there is a buffer with limit of `146`, but
         // we're trying to write `288` bytes into it. This happens with `Uint16` which is correctly
         // setup.
@@ -752,37 +756,40 @@ impl Renderer {
                     first_render_pass.set_vertex_buffer(2, self.instance_buffer.slice(..));
                     first_render_pass.pop_debug_group();
 
-                    for (index, mesh) in self.model.meshes.iter().enumerate() {
-                        // NOTE(alex): 3D Model index buffer.
-                        first_render_pass.push_debug_group("Set index buffer");
-                        first_render_pass.set_index_buffer(mesh.indices.slice(..));
-                        first_render_pass.pop_debug_group();
-
+                    for (mesh_index, mesh) in self.model.meshes.iter().enumerate() {
                         // NOTE(alex): 3D Model vertex buffer (and related).
                         first_render_pass.push_debug_group("Set positions vertex buffer");
                         first_render_pass.set_vertex_buffer(0, mesh.positions.slice(..));
                         first_render_pass.pop_debug_group();
 
-                        // NOTE(alex): 3D Model texture vertex buffer (and related).
-                        first_render_pass.push_debug_group("Set texture vertex buffer");
-                        first_render_pass.set_vertex_buffer(1, mesh.texture_coordinates.slice(..));
-                        first_render_pass.pop_debug_group();
+                        if let Some(texture_coordinates) = &mesh.texture_coordinates {
+                            // NOTE(alex): 3D Model texture vertex buffer (and related).
+                            first_render_pass.push_debug_group("Set texture vertex buffer");
+                            first_render_pass.set_vertex_buffer(1, texture_coordinates.slice(..));
+                            first_render_pass.pop_debug_group();
+                        }
 
-                        // NOTE(alex): wgpu API takes advantage of ranges to specify the offset
-                        // into the vertex buffer. `0..len()` means that the `gl_VertexIndex`
-                        // starts at `0`.
-                        // `instances` range is the same, but for the `gl_InstanceIndex` used in
-                        // instanced rendering.
-                        // In vulkan, this function call would look like `(0, 0)`.
-                        // first_render_pass.draw(0..world.vertices.len() as u32, 0..1);
-                        first_render_pass.draw_indexed(
-                            0..mesh.indices_count as u32,
-                            0,
-                            // NOTE(alex): The main advantage of having this be a `Range<u32>` over
-                            // just a number, is that with ranges it becomes possible to skip/select
-                            // which instances to draw (how many copies).
-                            0..self.transforms.len() as _,
-                        );
+                        // NOTE(alex): 3D Model index buffer.
+                        if let Some(indices) = &mesh.indices {
+                            first_render_pass.push_debug_group("Set index buffer");
+                            first_render_pass.set_index_buffer(indices.buffer.slice(..));
+                            first_render_pass.pop_debug_group();
+                            // NOTE(alex): wgpu API takes advantage of ranges to specify the offset
+                            // into the vertex buffer. `0..len()` means that the `gl_VertexIndex`
+                            // starts at `0`.
+                            // `instances` range is the same, but for the `gl_InstanceIndex` used in
+                            // instanced rendering.
+                            // In vulkan, this function call would look like `(0, 0)`.
+                            // first_render_pass.draw(0..world.vertices.len() as u32, 0..1);
+                            first_render_pass.draw_indexed(
+                                0..indices.count as u32,
+                                0,
+                                // NOTE(alex): The main advantage of having this be a `Range<u32>`
+                                // over just a number, is that with ranges it becomes possible to
+                                // skip/select which instances to draw (how many copies).
+                                0..self.transforms.len() as _,
+                            );
+                        }
                         first_render_pass.pop_debug_group();
                     }
                 }
@@ -798,7 +805,7 @@ impl Renderer {
 
                 let belt_future = self.staging_belt.recall();
                 // TODO(alex): Why do we need this spawner?
-                // Removing it, the triangle keeps rotating, no valdation errors, everything seems
+                // Removing it, the triangle keeps rotating, no validation errors, everything seems
                 // just fine.
                 // NOTE(alex): Maybe this is similar to the `vkQueueWaitIdle(graphicsQueue)` idea
                 // from vulkan? Vulkan also allows using fences to deal with this same issue, they

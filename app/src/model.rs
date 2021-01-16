@@ -2,23 +2,89 @@ use std::path;
 
 use log::info;
 
+use crate::texture::Texture;
+
 #[derive(Debug)]
 pub(crate) struct Model {
     pub(crate) meshes: Vec<Mesh>,
+    // pub(crate) textures: Vec<Mesh>,
+    // pub(crate) materials: Vec<Mesh>,
+}
+
+/// TODO(alex): Fill out this struct.
+/// ADD(alex): These are supposed to be passed as uniforms, so we need bind group.
+/// ADD(alex): The materials should hold a pipeline reference, as they're the main driving force
+/// between having multiple vertex and fragment shaders. The mesh only contains data that easily
+/// belongs to a single shader combo, but the some materials will have textures, while others only
+/// have colors, and so on. This is where the biggest difference exists in the models' metadata,
+/// the optional and variable fields that require specialized shaders (`scene.gltf` vs `kitten.gltf`
+/// is an example of this).
+///
+/// The pipeline here is non-owning (only a reference) because we'll have common materials that are
+/// sharing the same shaders (they differ by value, not by kinds of data).
+pub struct Material {
+    /// TODO(alex): The texture in a glTF file is related to the `tangent` attribute and is named
+    /// `normalTexture`, is this the same thing as an actual texture?
+    pub(crate) texture: Texture,
+    pub(crate) pbr_metallic_roughness: glam::Vec4,
+    /// `RGBA`
+    ///
+    /// NOTE(alex): This is a multiplier for the fragment shader final color value, it's a base
+    /// color of this material, a blue object would have `[0.0, 0.0, 1.0, 1.0]`, while a
+    /// red object would be `[1.0, 0.0, 0.0, 1.0]`.
+    pub(crate) base_color_factor: glam::Vec4,
+
+    /// NOTE(alex): This determines how metallic the material is in a range of
+    /// `0.0` being non-metal, and `1.0` being metal.
+    ///
+    /// Check the `assets/metallicRoughnessSpheres.png`.
+    pub(crate) metallic_factor: f32,
+
+    /// NOTE(alex): Mirror-like properties, `0.0` reflects, and `1.0` is completely rough.
+    ///
+    /// Check the `assets/metallicRoughnessSpheres.png`.
+    pub(crate) roughness_factor: f32,
 }
 
 /// TODO(alex): Some of these fields are optional (or might be sets, instead of single elements).
 /// This breaks the `kitten.gltf` model, as it doesn't have `TEXCOORD_0` nor related buffer.
 /// Some models may have additional `TEXCOORD_1`, `TEXCOORD_2`.
+///
+/// ADD(alex): Even when handling optional values like this, it's not enough, as the validation
+/// layers will complain that no value is passed to the shader (no texture coordinates in the model,
+/// but a `in vec2 tex_coords` in the shader). This means that to solve this problem, either we
+/// need an uber shader and use a single `in` with array of some type (which sounds like a
+/// horrible solution tbh), or have different pipelines for different model cases (the better
+/// approach, as we also need to specify the `IndexFormat` during pipeline creation).
+///
+/// The rest of what we're doing here seems good enough.
 #[derive(Debug)]
 pub(crate) struct Mesh {
+    /// NOTE(alex): This is not used right now, but it could be useful when loading a whole `scene`
+    /// in the future (reference the mesh `nodes` by id).
+    pub(crate) id: usize,
+    /// NOTE(alex): `Vec3<f32>`
+    pub(crate) normals: Option<wgpu::Buffer>,
+    /// NOTE(alex): `Vec3<f32>`
     pub(crate) positions: wgpu::Buffer,
-    pub(crate) texture_coordinates: wgpu::Buffer,
+    /// NOTE(alex): `Vec4<f32>`
+    pub(crate) tangents: Option<wgpu::Buffer>,
+    pub(crate) texture_coordinates: Option<wgpu::Buffer>,
+
     /// NOTE(alex): Indices can be thought of as pointers into the vertex buffer, they take care of
     /// duplicated vertices, by essentially treating each vertex as a "thing", that's why
     /// the pointer analogy is so fitting here.
-    pub(crate) indices: wgpu::Buffer,
-    pub(crate) indices_count: usize,
+    pub(crate) indices: Option<Indices>,
+    // TODO(alex): Add this to the mesh, the big issue here will be how to use the material as a
+    // reference, as `materials_buffer[0]` may be used by multiple meshes.
+    // pub(crate) material: Option<&Material>,
+}
+
+#[derive(Debug)]
+pub(crate) struct Indices {
+    pub(crate) buffer: wgpu::Buffer,
+    pub(crate) count: usize,
+    pub(crate) format: wgpu::IndexFormat,
 }
 
 /// NOTE(alex): This is a higher level approach to loading the data, it uses the glTF-crate
@@ -98,9 +164,11 @@ pub(crate) fn load_model<'x>(path: &path::Path, device: &wgpu::Device) -> Model 
     for mesh in document.meshes() {
         info!("Loading mesh {:?}", mesh.name());
 
+        let id = mesh.index();
         let mut indices = None;
-        let mut indices_count = 0;
+        let mut normals = None;
         let mut positions = None;
+        let mut tangents = None;
         let mut texture_coordinates = None;
 
         for primitive in mesh.primitives() {
@@ -134,8 +202,22 @@ pub(crate) fn load_model<'x>(path: &path::Path, device: &wgpu::Device) -> Model 
                     length,
                     offset
                 );
-                indices = Some(indices_buffer);
-                indices_count = count;
+
+                let index_format = match indices_accessor.data_type() {
+                    gltf::accessor::DataType::U16 => wgpu::IndexFormat::Uint16,
+                    gltf::accessor::DataType::U32 => wgpu::IndexFormat::Uint32,
+                    invalid_type => panic!(
+                        "Invalid index format type {:?} for mesh {:?}.",
+                        invalid_type,
+                        mesh.name()
+                    ),
+                };
+
+                indices = Some(Indices {
+                    buffer: indices_buffer,
+                    count,
+                    format: index_format,
+                });
             }
 
             for (semantic, accessor) in primitive.attributes() {
@@ -185,45 +267,46 @@ pub(crate) fn load_model<'x>(path: &path::Path, device: &wgpu::Device) -> Model 
                     usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
                 });
 
+                info!("attributes -> {:?}", semantic);
+                info!(
+                    "count {:?}, bufferView {:?}, byteLength {:?}, byteOffset {:?}",
+                    count,
+                    view.index(),
+                    byte_length,
+                    byte_offset
+                );
+                info!("attributes -> buffer len {:?}", attributes.len());
+
                 match semantic {
                     gltf::Semantic::Positions => {
-                        info!("attributes -> {:?}", semantic);
-                        info!(
-                            "count {:?}, bufferView {:?}, byteLength {:?}, byteOffset {:?}",
-                            count,
-                            view.index(),
-                            byte_length,
-                            byte_offset
-                        );
-                        info!("attributes -> buffer len {:?}", attributes.len());
                         positions = Some(attributes_buffer);
                     }
-                    gltf::Semantic::TexCoords(set_index) => {
-                        info!("attributes -> {:?}", semantic);
-                        info!(
-                            "count {:?}, bufferView {:?}, byteLength {:?}, byteOffset {:?}",
-                            count,
-                            view.index(),
-                            byte_length,
-                            byte_offset
-                        );
-                        info!("attributes -> buffer len {:?}", attributes.len());
+                    gltf::Semantic::TexCoords(_) => {
                         texture_coordinates = Some(attributes_buffer);
                     }
-                    _ => (),
+                    gltf::Semantic::Normals => {
+                        normals = Some(attributes_buffer);
+                    }
+                    gltf::Semantic::Tangents => {
+                        tangents = Some(attributes_buffer);
+                    }
+                    gltf::Semantic::Colors(_) => {}
+                    gltf::Semantic::Joints(_) => {}
+                    gltf::Semantic::Weights(_) => {}
                 }
             }
         }
 
         meshes.push(Mesh {
+            id,
+            normals,
             positions: positions.unwrap(),
-            indices: indices.unwrap(),
-            indices_count,
-            texture_coordinates: texture_coordinates.unwrap(),
+            indices,
+            tangents,
+            texture_coordinates,
         });
     }
-    // }
-    // }
+
     let model = Model { meshes };
 
     model
