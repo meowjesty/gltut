@@ -519,7 +519,7 @@ impl Renderer {
         let path = std::path::Path::new("./assets/scene.gltf");
         // FIXME(alex): Can't render kitten yet because we're `unwrap`ping the texture option.
         // let path = std::path::Path::new("./assets/kitten.gltf");
-        let model = load_model(path, &device);
+        let model = load_model(path, &device, &queue);
 
         // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
         // so it makes sense to handle every kind of possible `VertexBufferDescriptor` during
