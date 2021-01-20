@@ -1,4 +1,4 @@
-use std::path;
+use std::{collections::HashMap, path};
 
 use image::GenericImageView;
 use log::{error, info};
@@ -197,15 +197,18 @@ pub(crate) fn load_model<'x>(
                 // convert the image, instead of trying to use its correct format.
                 // There's also an issue with size `16` image formats, as they become `Vec<u16>`,
                 // instead of `Vec<u8>` which causes conflict. I'm out of ideas for solving this.
+                // ADD(alex): The main reason we can't use this is that `scene.gltf` has
+                // `ImageRgb8` images, but wgpu requires an alpha channel as in `Rgba8`. This makes
+                // the conversion mandatory.
                 /*
                 let format = match dynamic_image {
                     image::DynamicImage::ImageLuma8(_) => {
-                        error!("Image format not supported ImageLuma8, converting to rgba8.");
-                        wgpu::TextureFormat::Rgba8UnormSrgb
+                        error!("Image format not supported ImageLuma8, converting to r8snorm.");
+                        wgpu::TextureFormat::R8Snorm
                     }
                     image::DynamicImage::ImageLumaA8(_) => {
-                        error!("Image format not supported ImageLumaA8, converting to rgba8.");
-                        wgpu::TextureFormat::Rgba8UnormSrgb
+                        error!("Image format not supported ImageLumaA8, converting to rg8snorm.");
+                        wgpu::TextureFormat::Rg8Snorm
                     }
                     image::DynamicImage::ImageRgb8(_) => {
                         error!("Image format not supported ImageRgb8, converting to rgba8.");
@@ -342,10 +345,29 @@ pub(crate) fn load_model<'x>(
         textures.push(texture);
     }
 
-    // TODO(alex): Now I have everything needed to load the `materials` into wgpu-style data.
-    // The issue becomes: `material.normalTexture.texCoord` is a link to a `Mesh`, but the
-    // `mesh.material` is a link to a `Material`, we have cycle references :(.
+    for gltf_material in document.materials() {
+        info!("Loading material {:?}", gltf_material.name());
 
+        if let Some(gltf_normal_texture) = gltf_material.normal_texture() {
+            let normal_texture = gltf_normal_texture.texture().index();
+            let scale = gltf_normal_texture.scale();
+            let tex_coord_index = gltf_normal_texture.tex_coord();
+        }
+
+        // TODO(alex): Finish loading the material.
+        let pbr_metallic_roughness = gltf_material.pbr_metallic_roughness();
+        if let Some(gltf_base_color_texture) = pbr_metallic_roughness.base_color_texture() {
+            let base_color_texture = gltf_base_color_texture.texture().index();
+        };
+    }
+
+    // TODO(alex): Looks like we could load everything by digging in the mesh iterator, to avoid
+    // having duplicate textures, materials and so on in the wgpu side, we could just check that
+    // the resource index already exists in some global-ish state, kinda like we're doing here with
+    // the vecs that hold the resources before being passed into the `Model` and returned.
+    let mut images: HashMap<u32, gltf::Image> = HashMap::with_capacity(4);
+    let mut textures: HashMap<u32, gltf::Texture> = HashMap::with_capacity(4);
+    let mut materials: HashMap<u32, gltf::Material> = HashMap::with_capacity(4);
     for mesh in document.meshes() {
         info!("Loading mesh {:?}", mesh.name());
 
