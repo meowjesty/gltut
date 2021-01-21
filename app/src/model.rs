@@ -19,6 +19,35 @@ pub(crate) struct Image {
     pub(crate) format: wgpu::TextureFormat,
 }
 
+#[derive(Debug)]
+pub(crate) struct PbrMetallicRoughness {
+    /// `RGBA`
+    ///
+    /// NOTE(alex): This is a multiplier for the fragment shader final color value, it's a base
+    /// color of this material, a blue object would have `[0.0, 0.0, 1.0, 1.0]`, while a
+    /// red object would be `[1.0, 0.0, 0.0, 1.0]`.
+    pub(crate) base_color_factor: [f32; 4],
+    pub(crate) base_color_texture: Option<Texture>,
+
+    /// NOTE(alex): This determines how metallic the material is in a range of
+    /// `0.0` being non-metal, and `1.0` being metal.
+    ///
+    /// Check the `assets/metallicRoughnessSpheres.png`.
+    pub(crate) metallic_factor: f32,
+    pub(crate) metallic_roughness_texture: Option<Texture>,
+
+    /// NOTE(alex): Mirror-like properties, `0.0` reflects, and `1.0` is completely rough.
+    ///
+    /// Check the `assets/metallicRoughnessSpheres.png`.
+    pub(crate) roughness_factor: f32,
+}
+
+#[derive(Debug)]
+pub(crate) struct NormalTexture {
+    pub(crate) texture: Texture,
+    pub(crate) scale: f32,
+}
+
 /// TODO(alex): Fill out this struct.
 /// ADD(alex): These are supposed to be passed as uniforms, so we need bind group.
 /// ADD(alex): The materials should hold a pipeline reference, as they're the main driving force
@@ -30,28 +59,13 @@ pub(crate) struct Image {
 ///
 /// The pipeline here is non-owning (only a reference) because we'll have common materials that are
 /// sharing the same shaders (they differ by value, not by kinds of data).
-pub struct Material {
+#[derive(Debug)]
+pub(crate) struct Material {
+    pub(crate) double_sided: bool,
     /// TODO(alex): The texture in a glTF file is related to the `tangent` attribute and is named
     /// `normalTexture`, is this the same thing as an actual texture?
-    pub(crate) texture: Texture,
-    pub(crate) pbr_metallic_roughness: glam::Vec4,
-    /// `RGBA`
-    ///
-    /// NOTE(alex): This is a multiplier for the fragment shader final color value, it's a base
-    /// color of this material, a blue object would have `[0.0, 0.0, 1.0, 1.0]`, while a
-    /// red object would be `[1.0, 0.0, 0.0, 1.0]`.
-    pub(crate) base_color_factor: glam::Vec4,
-
-    /// NOTE(alex): This determines how metallic the material is in a range of
-    /// `0.0` being non-metal, and `1.0` being metal.
-    ///
-    /// Check the `assets/metallicRoughnessSpheres.png`.
-    pub(crate) metallic_factor: f32,
-
-    /// NOTE(alex): Mirror-like properties, `0.0` reflects, and `1.0` is completely rough.
-    ///
-    /// Check the `assets/metallicRoughnessSpheres.png`.
-    pub(crate) roughness_factor: f32,
+    pub(crate) normal_texture: Option<NormalTexture>,
+    pub(crate) pbr_metallic_roughness: PbrMetallicRoughness,
 }
 
 /// TODO(alex): Some of these fields are optional (or might be sets, instead of single elements).
@@ -172,11 +186,16 @@ pub(crate) fn load_model<'x>(
     // for node in scene.nodes() {
     // if let Some(mesh) = node.mesh() {
     let mut meshes = Vec::with_capacity(4);
-    let mut images = Vec::with_capacity(4);
     info!("Loading geometry from file {:?}", path);
 
+    // let mut images = Vec::with_capacity(4);
+    let mut images = HashMap::with_capacity(4);
     for gltf_image in document.images() {
-        info!("Loading image {:?}", gltf_image.name());
+        info!(
+            "Loading image[{:?}] {:?}",
+            gltf_image.index(),
+            gltf_image.name()
+        );
         let source = gltf_image.source();
         info!("{:?}", source);
         match source {
@@ -240,23 +259,29 @@ pub(crate) fn load_model<'x>(
                 let pixels = dynamic_image.to_rgba8().to_vec();
                 let format = wgpu::TextureFormat::Rgba8UnormSrgb;
 
+                let index = gltf_image.index();
                 let image = Image {
                     size,
                     pixels,
                     format,
                 };
 
-                images.push(image);
+                // images.push(image);
+                images.insert(index, image);
             }
         }
     }
 
-    let mut textures = Vec::with_capacity(4);
+    let mut textures = HashMap::with_capacity(4);
     for gltf_texture in document.textures() {
-        info!("Loading texture {:?}", gltf_texture.name());
+        info!(
+            "Loading texture[{:?}] {:?}",
+            gltf_texture.index(),
+            gltf_texture.name()
+        );
 
         let image_index = gltf_texture.source().index();
-        let image = images.get(image_index).unwrap();
+        let image = images.get(&image_index).unwrap();
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: gltf_texture.name(),
             size: image.size,
@@ -337,39 +362,84 @@ pub(crate) fn load_model<'x>(
             anisotropy_clamp: core::num::NonZeroU8::new(16),
         });
 
+        let index = gltf_texture.index();
         let texture = Texture {
             texture,
             view,
             sampler,
         };
-        textures.push(texture);
+        // textures.push(texture);
+        textures.insert(index, texture);
     }
 
+    // TODO(alex): We don't store the `texCoord` yet, so we have no real way of referencing the
+    // `mesh.texCoord <-> material.texCoord`, this relation is currently unimplemented.
+    let mut materials: HashMap<usize, Material> = HashMap::with_capacity(4);
     for gltf_material in document.materials() {
-        info!("Loading material {:?}", gltf_material.name());
+        info!(
+            "Loading material[{:?}] {:?}",
+            gltf_material.index(),
+            gltf_material.name()
+        );
 
+        let mut normal_texture = None;
         if let Some(gltf_normal_texture) = gltf_material.normal_texture() {
-            let normal_texture = gltf_normal_texture.texture().index();
+            let index = gltf_normal_texture.texture().index();
             let scale = gltf_normal_texture.scale();
             let tex_coord_index = gltf_normal_texture.tex_coord();
+            let texture = NormalTexture {
+                texture: textures.remove(&index).unwrap(),
+                scale,
+            };
+            normal_texture = Some(texture);
         }
 
-        // TODO(alex): Finish loading the material.
-        let pbr_metallic_roughness = gltf_material.pbr_metallic_roughness();
-        if let Some(gltf_base_color_texture) = pbr_metallic_roughness.base_color_texture() {
-            let base_color_texture = gltf_base_color_texture.texture().index();
+        let mut base_color_texture = None;
+        let gltf_pbr_metallic_roughness = gltf_material.pbr_metallic_roughness();
+        if let Some(gltf_base_color_texture) = gltf_pbr_metallic_roughness.base_color_texture() {
+            let index = gltf_base_color_texture.texture().index();
+            let texture = textures.remove(&index).unwrap();
+            base_color_texture = Some(texture);
         };
+
+        let mut metallic_roughness_texture = None;
+        if let Some(gltf_metallic_roughness_texture) =
+            gltf_pbr_metallic_roughness.metallic_roughness_texture()
+        {
+            let index = gltf_metallic_roughness_texture.texture().index();
+            let texture = textures.remove(&index).unwrap();
+            metallic_roughness_texture = Some(texture);
+        }
+
+        let pbr_metallic_roughness = PbrMetallicRoughness {
+            base_color_factor: gltf_pbr_metallic_roughness.base_color_factor(),
+            base_color_texture,
+            metallic_factor: gltf_pbr_metallic_roughness.metallic_factor(),
+            metallic_roughness_texture,
+            roughness_factor: gltf_pbr_metallic_roughness.roughness_factor(),
+        };
+
+        let material = Material {
+            double_sided: gltf_material.double_sided(),
+            normal_texture,
+            pbr_metallic_roughness,
+        };
+
+        materials.insert(gltf_material.index().unwrap_or(0), material);
     }
 
     // TODO(alex): Looks like we could load everything by digging in the mesh iterator, to avoid
     // having duplicate textures, materials and so on in the wgpu side, we could just check that
     // the resource index already exists in some global-ish state, kinda like we're doing here with
     // the vecs that hold the resources before being passed into the `Model` and returned.
-    let mut images: HashMap<u32, gltf::Image> = HashMap::with_capacity(4);
-    let mut textures: HashMap<u32, gltf::Texture> = HashMap::with_capacity(4);
-    let mut materials: HashMap<u32, gltf::Material> = HashMap::with_capacity(4);
+    // ADD(alex): The `HashMap` is a decent approach (just vec indexing is also okay), but it's
+    // better to load things separately as we're already doing, or we end up with code that is deep
+    // in `if -> else` hell.
+    // let mut images: HashMap<usize, gltf::Image> = HashMap::with_capacity(4);
+    // let mut textures: HashMap<usize, gltf::Texture> = HashMap::with_capacity(4);
+    // let mut materials: HashMap<usize, gltf::Material> = HashMap::with_capacity(4);
     for mesh in document.meshes() {
-        info!("Loading mesh {:?}", mesh.name());
+        info!("Loading mesh[{:?}] {:?}", mesh.index(), mesh.name());
 
         let id = mesh.index();
         let mut indices = None;
@@ -379,7 +449,7 @@ pub(crate) fn load_model<'x>(
         let mut texture_coordinates = None;
 
         for primitive in mesh.primitives() {
-            info!("primitive {:?}", primitive.index());
+            info!("Loading primitive[{:?}]", primitive.index());
 
             if let Some(indices_accessor) = primitive.indices() {
                 let label = indices_accessor.name();
@@ -427,8 +497,32 @@ pub(crate) fn load_model<'x>(
                 });
             }
 
+            // TODO(alex): Not worth doing this, we're better off using the `HashMap<index, obj>`,
+            // but loading things separately and them stitching them together.
+            let material = primitive.material();
+            info!(
+                "primitive.material[{:?}] {:?}",
+                material.index(),
+                material.name()
+            );
+            if let Some(material_index) = material.index() {
+                if !materials.contains_key(&material_index) {
+                    info!("Loading new material {:?}.", material_index);
+
+                    if let Some(normal_texture) = material.normal_texture() {
+                        let texture = normal_texture.texture();
+                        if !textures.contains_key(&texture.index()) {
+                            info!(
+                                "Loading new texture {:?}.",
+                                (texture.name(), texture.index())
+                            );
+                        }
+                    }
+                }
+            }
+
             for (semantic, accessor) in primitive.attributes() {
-                info!("attributes {:?}", accessor.index());
+                info!("attributes[{:?}]", accessor.index());
                 let label = accessor.name();
                 // NOTE(alex): Number of components, if we have VEC3 as the data type, then to get
                 // the number of bytes would be something like `count * size_of(VEC3)`.
@@ -452,7 +546,7 @@ pub(crate) fn load_model<'x>(
                     usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
                 });
 
-                info!("attributes -> {:?}", semantic);
+                info!("semantic {:?}", semantic);
                 info!(
                     "count {:?}, bufferView {:?}, byteLength {:?}, byteOffset {:?}",
                     accessor.count(),
@@ -460,7 +554,7 @@ pub(crate) fn load_model<'x>(
                     byte_length,
                     byte_offset
                 );
-                info!("attributes -> buffer len {:?}", attributes.len());
+                info!("buffer len {:?}", attributes.len());
 
                 match semantic {
                     gltf::Semantic::Positions => {
