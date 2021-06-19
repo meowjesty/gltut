@@ -209,7 +209,7 @@ pub(crate) fn load_model<'x>(
                 let size = wgpu::Extent3d {
                     width: dimensions.0,
                     height: dimensions.1,
-                    depth: 1,
+                    depth_or_array_layers: 1,
                 };
 
                 // TODO(alex): `wgpu` doesn't support most of these formats, so we're going to
@@ -293,16 +293,16 @@ pub(crate) fn load_model<'x>(
         });
 
         queue.write_texture(
-            wgpu::TextureCopyView {
+            wgpu::ImageCopyTexture {
                 texture: &texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
             &image.pixels,
-            wgpu::TextureDataLayout {
+            wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: 4 * image.size.width,
-                rows_per_image: image.size.height,
+                bytes_per_row: core::num::NonZeroU32::new(4 * image.size.width),
+                rows_per_image: core::num::NonZeroU32::new(image.size.height),
             },
             image.size,
         );
@@ -313,7 +313,7 @@ pub(crate) fn load_model<'x>(
             dimension: Some(wgpu::TextureViewDimension::D2),
             aspect: wgpu::TextureAspect::All,
             base_mip_level: 0,
-            level_count: core::num::NonZeroU32::new(1),
+            mip_level_count: core::num::NonZeroU32::new(1),
             base_array_layer: 0,
             array_layer_count: core::num::NonZeroU32::new(1),
         });
@@ -360,6 +360,7 @@ pub(crate) fn load_model<'x>(
             lod_max_clamp: core::f32::MAX,
             compare: None,
             anisotropy_clamp: core::num::NonZeroU8::new(16),
+            border_color: None,
         });
 
         let index = gltf_texture.index();

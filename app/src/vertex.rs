@@ -22,41 +22,41 @@ pub struct Vertex {
 impl Vertex {
     // pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<Self>() as wgpu::BufferAddress;
     pub const SIZE: wgpu::BufferAddress = size_of::<[f32; 3]>() as wgpu::BufferAddress;
-    pub const DESCRIPTOR: wgpu::VertexBufferDescriptor<'static> = wgpu::VertexBufferDescriptor {
-        stride: Self::SIZE,
+    pub const DESCRIPTOR: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: Self::SIZE,
         step_mode: wgpu::InputStepMode::Vertex,
-        // attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3],
+        // attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
         attributes: &[
-            wgpu::VertexAttributeDescriptor {
+            wgpu::VertexAttribute {
                 offset: 0,
                 shader_location: VERTEX_SHADER_LOCATION,
-                format: wgpu::VertexFormat::Float3,
+                format: wgpu::VertexFormat::Float32x3,
             },
             // NOTE(alex): This is not the way to change the data contained in this buffer, we must
             // pass changing values (to do the circular movement, for example) in a separate buffer,
             // like we don for the `model_matrix` in the vertex shader.
-            // wgpu::VertexAttributeDescriptor {
+            // wgpu::VertexAttribute {
             //     offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
             //     shader_location: 1,
-            //     format: wgpu::VertexFormat::Float2,
+            //     format: wgpu::VertexFormat::Float32x2,
             // },
         ],
     };
 
-    // pub fn descriptor_3d<'x>() -> Box<wgpu::VertexBufferDescriptor<'x>> {
-    //     let mut attributes = wgpu::vertex_attr_array![0 => Float3, 1 => Float3];
-    //     Box::new(wgpu::VertexBufferDescriptor {
-    //         stride: core::mem::size_of::<Self>() as wgpu::BufferAddress,
+    // pub fn descriptor_3d<'x>() -> Box<wgpu::VertexBufferLayout<'x>> {
+    //     let mut attributes = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+    //     Box::new(wgpu::VertexBufferLayout {
+    //         array_stride: core::mem::size_of::<Self>() as wgpu::BufferAddress,
     //         step_mode: wgpu::InputStepMode::Vertex,
     //         attributes: &attributes,
     //     })
     // }
 
-    // pub fn descriptor_2d<'x>() -> wgpu::VertexBufferDescriptor<'x> {
-    //     wgpu::VertexBufferDescriptor {
-    //         stride: core::mem::size_of::<Self>() as wgpu::BufferAddress,
+    // pub fn descriptor_2d<'x>() -> wgpu::VertexBufferLayout<'x> {
+    //     wgpu::VertexBufferLayout {
+    //         array_stride: core::mem::size_of::<Self>() as wgpu::BufferAddress,
     //         step_mode: wgpu::InputStepMode::Vertex,
-    //         attributes: &wgpu::vertex_attr_array![0 => Float3],
+    //         attributes: &wgpu::vertex_attr_array![0 => Float32x3],
     //     }
     // }
 }
@@ -71,25 +71,25 @@ pub(crate) struct DebugVertex {
 
 impl DebugVertex {
     pub const SIZE: wgpu::BufferAddress = size_of::<Self>() as wgpu::BufferAddress;
-    pub const DESCRIPTOR: wgpu::VertexBufferDescriptor<'static> = wgpu::VertexBufferDescriptor {
-        stride: Self::SIZE,
+    pub const DESCRIPTOR: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: Self::SIZE,
         step_mode: wgpu::InputStepMode::Vertex,
         attributes: &[
-            wgpu::VertexAttributeDescriptor {
+            wgpu::VertexAttribute {
                 offset: 0,
                 // NOTE(alex): This must be less than 32.
                 shader_location: 24,
-                format: wgpu::VertexFormat::Float3,
+                format: wgpu::VertexFormat::Float32x3,
             },
-            wgpu::VertexAttributeDescriptor {
+            wgpu::VertexAttribute {
                 offset: size_of::<glam::Vec3>() as wgpu::BufferAddress,
                 shader_location: 25,
-                format: wgpu::VertexFormat::Float3,
+                format: wgpu::VertexFormat::Float32x3,
             },
-            wgpu::VertexAttributeDescriptor {
+            wgpu::VertexAttribute {
                 offset: (size_of::<glam::Vec3>() * 2) as wgpu::BufferAddress,
                 shader_location: 26,
-                format: wgpu::VertexFormat::Float2,
+                format: wgpu::VertexFormat::Float32x2,
             },
         ],
     };

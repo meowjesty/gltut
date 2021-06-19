@@ -50,32 +50,32 @@ impl Instance {
     /// is a 4x4 matrix. Is there a simpler way of doing this? As it stands, having to specify
     /// each `shader_location` is error prone, and incovenient.
     ///
-    /// The big difference between this and a `VertexBufferDescriptor` is the `step_mode`.
+    /// The big difference between this and a `VertexBufferLayout` is the `step_mode`.
     ///
     /// TODO(alex): Improving this probably ties in with using `struct Instance` in the `.vert`.
-    pub const DESCRIPTOR: wgpu::VertexBufferDescriptor<'static> = wgpu::VertexBufferDescriptor {
-        stride: Self::SIZE,
+    pub const DESCRIPTOR: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: Self::SIZE,
         step_mode: wgpu::InputStepMode::Instance,
         attributes: &[
-            wgpu::VertexAttributeDescriptor {
+            wgpu::VertexAttribute {
                 offset: 0,
                 shader_location: INSTANCE_SHADER_LOCATION,
-                format: wgpu::VertexFormat::Float4,
+                format: wgpu::VertexFormat::Float32x4,
             },
-            wgpu::VertexAttributeDescriptor {
+            wgpu::VertexAttribute {
                 offset: core::mem::size_of::<glam::Vec4>() as wgpu::BufferAddress,
                 shader_location: INSTANCE_SHADER_LOCATION + 1,
-                format: wgpu::VertexFormat::Float4,
+                format: wgpu::VertexFormat::Float32x4,
             },
-            wgpu::VertexAttributeDescriptor {
+            wgpu::VertexAttribute {
                 offset: (core::mem::size_of::<glam::Vec4>() * 2) as wgpu::BufferAddress,
                 shader_location: INSTANCE_SHADER_LOCATION + 2,
-                format: wgpu::VertexFormat::Float4,
+                format: wgpu::VertexFormat::Float32x4,
             },
-            wgpu::VertexAttributeDescriptor {
+            wgpu::VertexAttribute {
                 offset: (core::mem::size_of::<glam::Vec4>() * 3) as wgpu::BufferAddress,
                 shader_location: INSTANCE_SHADER_LOCATION + 3,
-                format: wgpu::VertexFormat::Float4,
+                format: wgpu::VertexFormat::Float32x4,
             },
         ],
     };
@@ -234,13 +234,13 @@ impl Renderer {
         label: Option<&str>,
         device: &wgpu::Device,
         swap_chain_descriptor: &wgpu::SwapChainDescriptor,
-        vertex_shader: wgpu::ShaderModuleSource,
-        fragment_shader: wgpu::ShaderModuleSource,
+        vertex_shader: wgpu::ShaderModuleDescriptor,
+        fragment_shader: wgpu::ShaderModuleDescriptor,
         bind_group_layouts: &[&wgpu::BindGroupLayout],
-        vertex_buffer_descriptors: &[wgpu::VertexBufferDescriptor],
+        vertex_buffer_layouts: &[wgpu::VertexBufferLayout],
     ) -> wgpu::RenderPipeline {
-        let vs_module = device.create_shader_module(vertex_shader);
-        let fs_module = device.create_shader_module(fragment_shader);
+        let vs_module = device.create_shader_module(&vertex_shader);
+        let fs_module = device.create_shader_module(&fragment_shader);
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -252,54 +252,49 @@ impl Renderer {
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label,
             layout: Some(&render_pipeline_layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
+            vertex: wgpu::VertexState {
                 module: &vs_module,
                 entry_point: "main",
+                buffers: vertex_buffer_layouts,
             },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            fragment: Some(wgpu::FragmentState {
                 module: &fs_module,
                 entry_point: "main",
+                targets: &[wgpu::ColorTargetState {
+                    format: swap_chain_descriptor.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrite::ALL,
+                }],
             }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::Back,
-                depth_bias: 0,
-                depth_bias_slope_scale: 0.0,
-                depth_bias_clamp: 0.0,
-                clamp_depth: false,
-                // polygon_mode: wgpu::PolygonMode::Fill,
-            }),
-            color_states: &[wgpu::ColorStateDescriptor {
-                format: swap_chain_descriptor.format,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                write_mask: wgpu::ColorWrite::ALL,
-            }],
             // NOTE(alex): Part of the `Input Assembly`, what kind of geometry will be drawn.
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: Some(wgpu::IndexFormat::Uint32),
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                clamp_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
             // NOTE(alex): This does the depth testing.
-            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+            depth_stencil: Some(wgpu::DepthStencilState {
                 format: Texture::DEPTH_FORMAT,
                 depth_write_enabled: true,
                 // NOTE(alex): How the depth testing will compare z-ordering, tells when to discard
                 // a new pixel, `Less` means pixels will be drawn front-to-back.
                 depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilStateDescriptor::default(),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: 0,
+                    slope_scale: 0.0,
+                    clamp: 0.0,
+                },
             }),
-            vertex_state: wgpu::VertexStateDescriptor {
-                // NOTE(alex): `IndexFormat` for 3D models in glTF will be specified in the json
-                // file, so we can't really create the pipeline before we've looked through our
-                // model data.
-                // TODO(alex): This brings a new question of how do we have glTF models with
-                // different `IndexFormat`s? Is this even desirable? Probably not, but is there a
-                // way to convert the files to use the desired format?
-                index_format: wgpu::IndexFormat::Uint32,
-                // index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &vertex_buffer_descriptors,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
             },
-            sample_count: 1,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
         });
 
         render_pipeline
@@ -327,10 +322,9 @@ impl Renderer {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    // label: Some("Main device descriptor"),
+                    label: Some("Main device descriptor"),
                     features: wgpu::Features::empty(),
                     limits: wgpu::Limits::default(),
-                    shader_validation: true,
                 },
                 None,
             )
@@ -340,7 +334,7 @@ impl Renderer {
         let render_format = wgpu::TextureFormat::Bgra8UnormSrgb;
         let swap_chain_descriptor = wgpu::SwapChainDescriptor {
             // usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
             format: render_format,
             width: window_size.width,
             height: window_size.height,
@@ -362,8 +356,9 @@ impl Renderer {
                     //     ty: wgpu::BufferBindingType::Uniform,
                     //     has_dynamic_offset: false,
                     // },
-                    ty: wgpu::BindingType::UniformBuffer {
-                        dynamic: false,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
                         min_binding_size: None,
                     },
 
@@ -387,7 +382,7 @@ impl Renderer {
             layout: &uniform_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: UNIFORM_BINDING_INDEX,
-                resource: wgpu::BindingResource::Buffer(uniform_buffer.slice(..)),
+                resource: wgpu::BindingResource::Buffer(uniform_buffer.as_entire_buffer_binding()),
             }],
         });
 
@@ -407,10 +402,10 @@ impl Renderer {
                     BindGroupLayoutEntry {
                         binding: TEXTURE_BINDING_INDEX,
                         visibility: wgpu::ShaderStage::FRAGMENT,
-                        ty: wgpu::BindingType::SampledTexture {
-                            dimension: wgpu::TextureViewDimension::D2,
-                            component_type: wgpu::TextureComponentType::Float,
+                        ty: wgpu::BindingType::Texture {
                             multisampled: false,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
                         },
                         count: None,
                     },
@@ -418,7 +413,10 @@ impl Renderer {
                         binding: SAMPLER_BINDING_INDEX,
                         visibility: wgpu::ShaderStage::FRAGMENT,
                         // TODO(alex): `comparison` has to do with linear filtering?
-                        ty: wgpu::BindingType::Sampler { comparison: false },
+                        ty: wgpu::BindingType::Sampler {
+                            comparison: false,
+                            filtering: false,
+                        },
                         count: None,
                     },
                 ],
@@ -455,7 +453,7 @@ impl Renderer {
         });
 
         // NOTE(alex): Instancing follows pretty much the same pattern as passing vertex data:
-        // - have a `VertexBufferDescriptor` detailing how the data is structured for the shader;
+        // - have a `VertexBufferLayout` detailing how the data is structured for the shader;
         // - create a Buffer to put the instace data in;
         // - use it in the shader;
         // A good chunk of the code here is just about changing where each copy goes.
@@ -468,9 +466,9 @@ impl Renderer {
 
                     let position: glam::Vec3 = glam::Vec3::new(x as f32, 0.0, z as f32);
 
-                    let rotation = if position == glam::Vec3::zero() {
+                    let rotation = if position == glam::Vec3::ZERO {
                         // NOTE(alex): Quaternions can affect scale if they're not correct.
-                        glam::Quat::from_axis_angle(glam::Vec3::unit_z(), f32::to_radians(0.0))
+                        glam::Quat::from_axis_angle(glam::Vec3::Z, f32::to_radians(0.0))
                     } else {
                         glam::Quat::from_axis_angle(
                             position.clone().normalize(),
@@ -480,7 +478,7 @@ impl Renderer {
 
                     let transform = Transform {
                         position: glam::Vec4::new(position.x, position.y, position.z, 1.0),
-                        scale: glam::Vec4::one(),
+                        scale: glam::Vec4::ONE,
                         rotation,
                     };
 
@@ -522,7 +520,7 @@ impl Renderer {
         let model = load_model(path, &device, &queue);
 
         // TODO(alex): The shaders and descriptors are tightly coupled (for obvious reasons),
-        // so it makes sense to handle every kind of possible `VertexBufferDescriptor` during
+        // so it makes sense to handle every kind of possible `VertexBufferLayout` during
         // initialization (it doesn't seems to be a configurable feature). It might be refactored
         // out of here into a more clean `Pipeline` struct, but I guess that's about it.
         let hello_vs = wgpu::include_spirv!("./shaders/hello.vert.spv");
@@ -721,8 +719,9 @@ impl Renderer {
                     // `metal_shader`.
                     let mut first_render_pass =
                         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                                attachment: &frame.output.view,
+                            label: Some("First render pass"),
+                            color_attachments: &[wgpu::RenderPassColorAttachment {
+                                view: &frame.output.view,
                                 resolve_target: None,
                                 ops: wgpu::Operations {
                                     load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -737,8 +736,8 @@ impl Renderer {
                             // NOTE(alex): Depth testing, notice that we use the
                             // `depth_texture.view`, and not the texture itself.
                             depth_stencil_attachment: Some(
-                                wgpu::RenderPassDepthStencilAttachmentDescriptor {
-                                    attachment: &self.depth_texture.view,
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: &self.depth_texture.view,
                                     depth_ops: Some(wgpu::Operations {
                                         load: wgpu::LoadOp::Clear(1.0),
                                         store: true,
@@ -790,7 +789,10 @@ impl Renderer {
                         // NOTE(alex): 3D Model index buffer.
                         if let Some(indices) = &mesh.indices {
                             first_render_pass.push_debug_group("Set index buffer");
-                            first_render_pass.set_index_buffer(indices.buffer.slice(..));
+                            first_render_pass.set_index_buffer(
+                                indices.buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
                             first_render_pass.pop_debug_group();
                             // NOTE(alex): wgpu API takes advantage of ranges to specify the offset
                             // into the vertex buffer. `0..len()` means that the `gl_VertexIndex`

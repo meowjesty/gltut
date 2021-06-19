@@ -17,13 +17,13 @@ pub struct Texture {
 
 impl Texture {
     pub const SIZE: wgpu::BufferAddress = size_of::<[f32; 2]>() as wgpu::BufferAddress;
-    pub const DESCRIPTOR: wgpu::VertexBufferDescriptor<'static> = wgpu::VertexBufferDescriptor {
-        stride: Self::SIZE,
+    pub const DESCRIPTOR: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: Self::SIZE,
         step_mode: wgpu::InputStepMode::Vertex,
-        attributes: &[wgpu::VertexAttributeDescriptor {
+        attributes: &[wgpu::VertexAttribute {
             offset: 0,
             shader_location: TEXTURE_SHADER_LOCATION,
-            format: wgpu::VertexFormat::Float2,
+            format: wgpu::VertexFormat::Float32x2,
         }],
     };
 
@@ -31,7 +31,7 @@ impl Texture {
 
     /// NOTE(alex): Special kind of texture that is used for depth testing (**Depth Buffer**).
     ///
-    /// This texture will be created as a render output (`OUTPUT_ATTACHMENT`, similar to how a
+    /// This texture will be created as a render output (`RENDER_ATTACHMENT`, similar to how a
     /// `SwapChain` is a render target).
     ///
     /// Just relying on Z-axis ordering doesn't work very well in 3D, we're getting weird
@@ -51,7 +51,7 @@ impl Texture {
         let size = wgpu::Extent3d {
             width: swap_chain_descriptor.width,
             height: swap_chain_descriptor.height,
-            depth: 1,
+            depth_or_array_layers: 1,
         };
 
         let descriptor = &wgpu::TextureDescriptor {
@@ -61,9 +61,9 @@ impl Texture {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: Self::DEPTH_FORMAT,
-            // NOTE(alex): `TextureUsage::OUTPUT_ATTACHMENT` is the same as we have in the
+            // NOTE(alex): `TextureUsage::RENDER_ATTACHMENT` is the same as we have in the
             // `SwapChainDescriptor`, as this usage means we're rendering to this texture.
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::SAMPLED,
+            usage: wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::SAMPLED,
         };
         let texture = device.create_texture(&descriptor);
 
@@ -73,7 +73,7 @@ impl Texture {
             dimension: Some(wgpu::TextureViewDimension::D2),
             aspect: wgpu::TextureAspect::All,
             base_mip_level: 0,
-            level_count: NonZeroU32::new(1),
+            mip_level_count: NonZeroU32::new(1),
             base_array_layer: 0,
             array_layer_count: NonZeroU32::new(1),
         };
@@ -97,6 +97,7 @@ impl Texture {
             // TODO(alex): Is there an equivalent to vulkan's
             // `VkPhysicalDeviceProperties.limits.maxSamplerAnisotropy`?
             anisotropy_clamp: NonZeroU8::new(16),
+            border_color: None,
         };
         let sampler = device.create_sampler(&sampler_descriptor);
 
@@ -138,7 +139,7 @@ impl Texture {
         let size = wgpu::Extent3d {
             width: dimensions.0,
             height: dimensions.1,
-            depth: 1,
+            depth_or_array_layers: 1,
         };
         // NOTE(alex): This is somewhat equivalent to the vulkan `VkImage`, the main difference is
         // that memory handling is easier in wgpu.
@@ -172,16 +173,16 @@ impl Texture {
         // And the `Sampler`s are even more independent, as they have no connection to neither
         // `Texture` or `TextureView`.
         queue.write_texture(
-            wgpu::TextureCopyView {
+            wgpu::ImageCopyTexture {
                 texture: &texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
             &rgba,
-            wgpu::TextureDataLayout {
+            wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: 4 * size.width,
-                rows_per_image: size.height,
+                bytes_per_row: core::num::NonZeroU32::new(4 * size.width),
+                rows_per_image: core::num::NonZeroU32::new(size.height),
             },
             size,
         );
@@ -192,7 +193,7 @@ impl Texture {
             dimension: Some(wgpu::TextureViewDimension::D2),
             aspect: wgpu::TextureAspect::All,
             base_mip_level: 0,
-            level_count: NonZeroU32::new(1),
+            mip_level_count: NonZeroU32::new(1),
             base_array_layer: 0,
             array_layer_count: NonZeroU32::new(1),
         });
@@ -217,6 +218,7 @@ impl Texture {
             // TODO(alex): Is there an equivalent to vulkan's
             // `VkPhysicalDeviceProperties.limits.maxSamplerAnisotropy`?
             anisotropy_clamp: NonZeroU8::new(16),
+            border_color: None,
         });
 
         Ok(Self {

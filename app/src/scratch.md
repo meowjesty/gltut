@@ -59,19 +59,19 @@ pub struct DepthVertex {
 
 impl DepthVertex {
     pub const SIZE: wgpu::BufferAddress = size_of::<Self>() as wgpu::BufferAddress;
-    pub const DESCRIPTOR: wgpu::VertexBufferDescriptor<'static> = wgpu::VertexBufferDescriptor {
-        stride: Self::SIZE,
+    pub const DESCRIPTOR: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: Self::SIZE,
         step_mode: wgpu::InputStepMode::Vertex,
         attributes: &[
-            wgpu::VertexAttributeDescriptor {
+            wgpu::VertexAttribute {
                 offset: 0,
                 shader_location: 0,
-                format: wgpu::VertexFormat::Float3,
+                format: wgpu::VertexFormat::Float32x3,
             },
-            wgpu::VertexAttributeDescriptor {
+            wgpu::VertexAttribute {
                 offset: VEC3_SIZE as wgpu::BufferAddress,
                 shader_location: 1,
-                format: wgpu::VertexFormat::Float2,
+                format: wgpu::VertexFormat::Float32x2,
             },
         ],
     };
@@ -111,31 +111,31 @@ struct DepthPass {
 }
 
 vertex.rs
-pub const DESCRIPTOR_CUSTOM: wgpu::VertexBufferDescriptor<'static> =
-        wgpu::VertexBufferDescriptor {
-            stride: Self::SIZE,
+pub const DESCRIPTOR_CUSTOM: wgpu::VertexBufferLayout<'static> =
+        wgpu::VertexBufferLayout {
+            array_stride: Self::SIZE,
             step_mode: wgpu::InputStepMode::Vertex,
-            // attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3],
+            // attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
             attributes: &[
-                wgpu::VertexAttributeDescriptor {
+                wgpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
-                    format: wgpu::VertexFormat::Float3,
+                    format: wgpu::VertexFormat::Float32x3,
                 },
-                wgpu::VertexAttributeDescriptor {
+                wgpu::VertexAttribute {
                     offset: VEC3_SIZE as wgpu::BufferAddress,
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float3,
+                    format: wgpu::VertexFormat::Float32x3,
                 },
-                wgpu::VertexAttributeDescriptor {
+                wgpu::VertexAttribute {
                     offset: (VEC3_SIZE * 2) as wgpu::BufferAddress,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Float2,
+                    format: wgpu::VertexFormat::Float32x2,
                 },
-                wgpu::VertexAttributeDescriptor {
+                wgpu::VertexAttribute {
                     offset: (VEC3_SIZE * 2 + VEC2_SIZE) as wgpu::BufferAddress,
                     shader_location: 7,
-                    format: wgpu::VertexFormat::Float2,
+                    format: wgpu::VertexFormat::Float32x2,
                 },
             ],
         };
@@ -207,7 +207,7 @@ renderer.rs
 {
                     let mut debug_render_pass =
                         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                            color_attachments: &[wgpu::RenderPassColorAttachment {
                                 attachment: &frame.output.view,
                                 resolve_target: None,
                                 ops: wgpu::Operations {
