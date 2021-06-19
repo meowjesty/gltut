@@ -10,25 +10,25 @@ pub struct Vertex {
 
 impl Vertex {
     pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<Self>() as wgpu::BufferAddress;
-    pub const DESCRIPTOR: wgpu::VertexBufferDescriptor<'static> = wgpu::VertexBufferDescriptor {
-        stride: Self::SIZE,
+    pub const DESCRIPTOR: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: Self::SIZE,
         step_mode: wgpu::InputStepMode::Vertex,
         // attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3],
         attributes: &[
-            wgpu::VertexAttributeDescriptor {
+            wgpu::VertexAttribute {
                 offset: 0,
                 shader_location: 0,
-                format: wgpu::VertexFormat::Float3,
+                format: wgpu::VertexFormat::Float32x3,
             },
-            wgpu::VertexAttributeDescriptor {
+            wgpu::VertexAttribute {
                 offset: core::mem::size_of::<glam::Vec3>() as wgpu::BufferAddress,
                 shader_location: 1,
-                format: wgpu::VertexFormat::Float3,
+                format: wgpu::VertexFormat::Float32x3,
             },
-            wgpu::VertexAttributeDescriptor {
+            wgpu::VertexAttribute {
                 offset: (core::mem::size_of::<glam::Vec3>() * 2) as wgpu::BufferAddress,
                 shader_location: 2,
-                format: wgpu::VertexFormat::Float2,
+                format: wgpu::VertexFormat::Float32x2,
             },
         ],
     };
