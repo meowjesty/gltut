@@ -269,7 +269,8 @@ impl Renderer {
             // NOTE(alex): Part of the `Input Assembly`, what kind of geometry will be drawn.
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: Some(wgpu::IndexFormat::Uint32),
+                // strip_index_format: Some(wgpu::IndexFormat::Uint32),
+                strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
                 clamp_depth: false,
@@ -415,7 +416,7 @@ impl Renderer {
                         // TODO(alex): `comparison` has to do with linear filtering?
                         ty: wgpu::BindingType::Sampler {
                             comparison: false,
-                            filtering: false,
+                            filtering: true,
                         },
                         count: None,
                     },
@@ -514,7 +515,9 @@ impl Renderer {
         // Researching this problem, it's related to writing the data into the wrong buffer (again),
         // but where? The `scene.gltf` renders nicely. Read the TODO above for more info.
         // let path = std::path::Path::new("./assets/ship_light.gltf");
-        let path = std::path::Path::new("./assets/scene.gltf");
+        // let path = std::path::Path::new("./assets/scene.gltf");
+        let _ = include_bytes!("../../assets/BoxTextured.gltf");
+        let path = std::path::Path::new("./assets/BoxTextured.gltf");
         // FIXME(alex): Can't render kitten yet because we're `unwrap`ping the texture option.
         // let path = std::path::Path::new("./assets/kitten.gltf");
         let model = load_model(path, &device, &queue);
@@ -791,7 +794,7 @@ impl Renderer {
                             first_render_pass.push_debug_group("Set index buffer");
                             first_render_pass.set_index_buffer(
                                 indices.buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
+                                wgpu::IndexFormat::Uint16,
                             );
                             first_render_pass.pop_debug_group();
                             // NOTE(alex): wgpu API takes advantage of ranges to specify the offset

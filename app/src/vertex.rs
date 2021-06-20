@@ -23,7 +23,7 @@ impl Vertex {
     // pub const SIZE: wgpu::BufferAddress = core::mem::size_of::<Self>() as wgpu::BufferAddress;
     pub const SIZE: wgpu::BufferAddress = size_of::<[f32; 3]>() as wgpu::BufferAddress;
     pub const DESCRIPTOR: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
-        array_stride: Self::SIZE,
+        array_stride: size_of::<glam::Vec3>() as u64,
         step_mode: wgpu::InputStepMode::Vertex,
         // attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
         attributes: &[
